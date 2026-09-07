@@ -1,0 +1,1907 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>气象台智能值班管理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Noto Sans SC', sans-serif; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes countUp { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out; }
+        .animate-count { animation: countUp 0.5s ease-out; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+        .calendar-day { min-height: 130px; border-radius: 12px; transition: all 0.2s ease; position: relative; overflow: hidden; }
+        .calendar-day:hover { transform: translateY(-2px); box-shadow: 0 8px 25px -5px rgba(0,0,0,0.1); }
+        .calendar-day.weekend { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); }
+        .calendar-day.weekday { background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); }
+        .calendar-day.today { ring: 2px solid #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,0.1); }
+        .shift-badge {
+            font-size: 13px; padding: 4px 8px; border-radius: 8px; margin-bottom: 4px;
+            display: flex; align-items: center; justify-content: space-between;
+            transition: all 0.2s; cursor: pointer; font-weight: 500; line-height: 1.4;
+        }
+        .shift-badge:hover { transform: scale(1.02); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+
+        /* 岗位颜色 */
+        .badge-short { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #92400e; border: 1px solid #fcd34d; }
+        .badge-temp { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #1e40af; border: 1px solid #93c5fd; }
+        .badge-service { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); color: #065f46; border: 1px solid #6ee7b7; }
+        .badge-chief { background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%); color: #5b21b6; border: 1px solid #c4b5fd; }
+        .badge-lead { background: linear-gradient(135deg, #ffe4e6 0%, #fecdd3 100%); color: #9f1239; border: 1px solid #fda4af; }
+        .badge-director { background: linear-gradient(135deg, #ffedd5 0%, #fed7aa 100%); color: #9a3412; border: 1px solid #fdba74; }
+        .badge-boss { background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%); color: #3730a3; border: 1px solid #a5b4fc; }
+        .badge-emergency { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); color: #991b1b; border: 1px solid #fca5a5; }
+        .badge-radar { background: linear-gradient(135deg, #cffafe 0%, #a5f3fc 100%); color: #155e75; border: 1px solid #67e8f9; }
+        .badge-team { background: linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%); color: #9d174d; border: 1px solid #f9a8d4; }
+
+        .stat-card { border-radius: 16px; padding: 20px; position: relative; overflow: hidden; transition: all 0.3s ease; }
+        .stat-card:hover { transform: translateY(-3px); box-shadow: 0 12px 40px -10px rgba(0,0,0,0.15); }
+        .stat-card::before { content: ''; position: absolute; top: -50%; right: -20%; width: 150px; height: 150px; border-radius: 50%; background: rgba(255,255,255,0.1); }
+        .nav-item { transition: all 0.2s; border-radius: 10px; margin-bottom: 4px; }
+        .nav-item:hover, .nav-item.active { background: rgba(59,130,246,0.15); color: #60a5fa; }
+        .nav-item.active { border-left: 3px solid #60a5fa; }
+        .data-table th { background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); font-weight: 600; }
+        .data-table tr:hover td { background: #f8fafc; }
+        .modal-overlay { background: rgba(15,23,42,0.6); backdrop-filter: blur(4px); }
+        .modal-content { animation: fadeIn 0.3s ease-out; }
+        .progress-bar { height: 6px; border-radius: 3px; background: #e2e8f0; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+        .loading-overlay { position: fixed; inset: 0; background: rgba(255,255,255,0.9); z-index: 100; display: flex; align-items: center; justify-content: center; }
+        .loading-spinner { width: 48px; height: 48px; border: 4px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media print { .no-print { display: none !important; } body { background: white; } .calendar-day { break-inside: avoid; } }
+    </style>
+<base target="_blank">
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<!-- 全局加载遮罩 -->
+<div id="global-loading" class="loading-overlay" style="display:none;">
+    <div class="text-center">
+        <div class="loading-spinner mx-auto mb-4"></div>
+        <p class="text-slate-600 font-medium" id="loading-text">加载中...</p>
+    </div>
+</div>
+
+<!-- Supabase 配置提示（首次使用显示） -->
+<div id="config-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
+    <div class="modal-content bg-white rounded-2xl p-8 w-[500px] shadow-2xl">
+        <div class="text-center mb-6">
+            <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <i class="fas fa-cloud text-2xl text-white"></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-800">连接 Supabase 数据库</h3>
+            <p class="text-sm text-slate-400 mt-2">首次使用需要配置云数据库连接信息</p>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">Supabase URL</label>
+                <input id="sb-url" placeholder="https://xxxx.supabase.co" class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">Supabase Anon Key</label>
+                <input id="sb-key" type="password" placeholder="eyJhbGciOiJIUzI1NiIs..." class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm">
+            </div>
+            <div class="bg-blue-50 rounded-xl p-3 text-xs text-blue-700">
+                <p class="font-medium mb-1"><i class="fas fa-info-circle mr-1"></i>如何获取？</p>
+                <p>1. 访问 <a href="https://supabase.com" target="_blank" class="underline">supabase.com</a> 注册并创建项目</p>
+                <p>2. 进入 Project Settings → API</p>
+                <p>3. 复制 URL 和 anon public 密钥</p>
+            </div>
+            <button onclick="app.saveSupabaseConfig()" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">保存并连接</button>
+        </div>
+    </div>
+</div>
+
+<aside class="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white z-40 no-print flex flex-col">
+    <div class="p-6 border-b border-slate-700">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg">
+                <i class="fas fa-cloud-sun text-lg"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg leading-tight">气象台值班</h1>
+                <p class="text-xs text-slate-400">智能管理系统</p>
+            </div>
+        </div>
+    </div>
+    <nav class="flex-1 p-4 space-y-1">
+        <button onclick="app.switchTab('calendar')" id="nav-calendar" class="nav-item active w-full flex items-center space-x-3 px-4 py-3 text-sm">
+            <i class="fas fa-calendar-alt w-5"></i><span>日历排班</span>
+        </button>
+        <button onclick="app.switchTab('swap')" id="nav-swap" class="nav-item w-full flex items-center space-x-3 px-4 py-3 text-sm text-slate-300">
+            <i class="fas fa-exchange-alt w-5"></i><span>换班审批</span>
+            <span id="swap-badge" class="ml-auto hidden">
+                <span class="w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center" id="swap-count">0</span>
+            </span>
+        </button>
+        <button onclick="app.switchTab('staff')" id="nav-staff" class="nav-item w-full flex items-center space-x-3 px-4 py-3 text-sm text-slate-300">
+            <i class="fas fa-users w-5"></i><span>人员管理</span>
+        </button>
+        <button onclick="app.switchTab('import')" id="nav-import" class="nav-item w-full flex items-center space-x-3 px-4 py-3 text-sm text-slate-300">
+            <i class="fas fa-file-import w-5"></i><span>数据导入</span>
+        </button>
+        <button onclick="app.switchTab('export')" id="nav-export" class="nav-item w-full flex items-center space-x-3 px-4 py-3 text-sm text-slate-300">
+            <i class="fas fa-file-export w-5"></i><span>报表导出</span>
+        </button>
+    </nav>
+    <div class="p-4 border-t border-slate-700">
+        <div class="bg-slate-800 rounded-xl p-4">
+            <p class="text-xs text-slate-400 mb-2">当前月份</p>
+            <p class="text-lg font-bold" id="sidebar-month">2026年7月</p>
+            <div class="flex items-center mt-2 text-xs text-slate-400">
+                <span class="w-2 h-2 rounded-full bg-green-400 mr-2" id="db-status-dot"></span>
+                <span id="db-status">云数据库</span>
+            </div>
+            <button onclick="app.syncFromCloud()" class="mt-2 text-xs text-blue-400 hover:text-blue-300 underline">手动同步云端</button>
+        </div>
+    </div>
+</aside>
+
+<main class="ml-64 min-h-screen">
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 no-print">
+        <div class="flex justify-between items-center px-8 py-4">
+            <div class="flex items-center space-x-4">
+                <h2 class="text-xl font-bold text-slate-800" id="page-title">日历排班</h2>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-600 border border-blue-100" id="page-badge">本月</span>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button onclick="app.undo()" id="btn-undo" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition" disabled>
+                    <i class="fas fa-undo mr-1"></i>撤销
+                </button>
+                <button onclick="app.redo()" id="btn-redo" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition" disabled>
+                    <i class="fas fa-redo mr-1"></i>重做
+                </button>
+                <button onclick="window.print()" class="px-4 py-2 rounded-lg text-sm font-medium bg-slate-800 text-white hover:bg-slate-700 transition shadow-sm">
+                    <i class="fas fa-print mr-1"></i>打印
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="p-8">
+        <!-- 日历视图 -->
+        <div id="tab-calendar" class="tab-content">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div class="stat-card bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+                    <div class="relative z-10">
+                        <p class="text-blue-100 text-sm mb-1">本月总人次</p>
+                        <p class="text-3xl font-bold animate-count" id="stat-total">0</p>
+                        <div class="mt-3 flex items-center text-xs text-blue-100"><span>含工作日与休息日</span></div>
+                    </div>
+                    <i class="fas fa-users absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
+                </div>
+                <div class="stat-card bg-gradient-to-br from-emerald-500 to-emerald-600 text-white">
+                    <div class="relative z-10">
+                        <p class="text-emerald-100 text-sm mb-1">工作日值班</p>
+                        <p class="text-3xl font-bold animate-count" id="stat-workday">0</p>
+                        <div class="mt-3 text-xs text-emerald-100"><span>周一至周五普通值班</span></div>
+                    </div>
+                    <i class="fas fa-briefcase absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
+                </div>
+                <div class="stat-card bg-gradient-to-br from-amber-500 to-amber-600 text-white">
+                    <div class="relative z-10">
+                        <p class="text-amber-100 text-sm mb-1">休息日值班</p>
+                        <p class="text-3xl font-bold animate-count" id="stat-weekend">0</p>
+                        <div class="mt-3 text-xs text-amber-100"><span>周六周日休息值班</span></div>
+                    </div>
+                    <i class="fas fa-coffee absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
+                </div>
+                <div class="stat-card bg-gradient-to-br from-violet-500 to-violet-600 text-white">
+                    <div class="relative z-10">
+                        <p class="text-violet-100 text-sm mb-1">值班人员</p>
+                        <p class="text-3xl font-bold animate-count" id="stat-staff">0</p>
+                        <div class="mt-3 text-xs text-violet-100"><span>已录入系统</span></div>
+                    </div>
+                    <i class="fas fa-user-check absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center space-x-4">
+                        <button onclick="app.changeMonth(-1)" class="w-10 h-10 rounded-xl bg-slate-50 hover:bg-slate-100 flex items-center justify-center transition">
+                            <i class="fas fa-chevron-left text-slate-600"></i>
+                        </button>
+                        <div>
+                            <h3 class="text-2xl font-bold text-slate-800" id="current-month">2026年7月</h3>
+                            <p class="text-sm text-slate-400" id="current-month-info">本月共31天，8天为休息日</p>
+                        </div>
+                        <button onclick="app.changeMonth(1)" class="w-10 h-10 rounded-xl bg-slate-50 hover:bg-slate-100 flex items-center justify-center transition">
+                            <i class="fas fa-chevron-right text-slate-600"></i>
+                        </button>
+                    </div>
+                    <div class="flex items-center space-x-3 no-print">
+                        <input type="month" id="jump-month-input" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                        <button onclick="app.jumpToMonth()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 transition">跳转</button>
+                        <button onclick="app.openGenerateModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm hover:bg-indigo-700 transition">
+                            <i class="fas fa-magic mr-1"></i>自动排班
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap gap-4 mb-4 text-sm no-print" id="legend-area"></div>
+
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <div class="grid grid-cols-7 gap-2 mb-3 text-center">
+                    <div class="py-2 font-semibold text-slate-400 text-sm">周日</div>
+                    <div class="py-2 font-semibold text-slate-400 text-sm">周一</div>
+                    <div class="py-2 font-semibold text-slate-400 text-sm">周二</div>
+                    <div class="py-2 font-semibold text-slate-400 text-sm">周三</div>
+                    <div class="py-2 font-semibold text-slate-400 text-sm">周四</div>
+                    <div class="py-2 font-semibold text-slate-400 text-sm">周五</div>
+                    <div class="py-2 font-semibold text-slate-400 text-sm">周六</div>
+                </div>
+                <div id="calendar-grid" class="calendar-grid"></div>
+            </div>
+        </div>
+
+        <!-- 换班审批 -->
+        <div id="tab-swap" class="tab-content hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-1">
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                        <h3 class="text-lg font-bold text-slate-800 mb-4">申请换班</h3>
+                        <div class="space-y-4 text-sm">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">我的班次</label>
+                                <select id="swap-from" class="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" onchange="app.loadSwapShifts('from')">
+                                    <option value="">-- 选择人员 --</option>
+                                </select>
+                                <select id="swap-from-shift" class="w-full border border-slate-200 rounded-xl px-3 py-2 mt-2 bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" disabled>
+                                    <option value="">先选择人员</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">对方班次</label>
+                                <select id="swap-to" class="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" onchange="app.loadSwapShifts('to')">
+                                    <option value="">-- 选择人员 --</option>
+                                </select>
+                                <select id="swap-to-shift" class="w-full border border-slate-200 rounded-xl px-3 py-2 mt-2 bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" disabled>
+                                    <option value="">先选择人员</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-600 mb-1">原因</label>
+                                <textarea id="swap-reason" rows="2" class="w-full border border-slate-200 rounded-xl px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="请输入换班原因..."></textarea>
+                            </div>
+                            <button onclick="app.requestSwap()" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white py-2.5 rounded-xl font-medium transition">
+                                <i class="fas fa-paper-plane mr-1"></i>提交申请
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="lg:col-span-2">
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-bold text-slate-800">换班审批记录</h3>
+                            <span class="px-3 py-1 rounded-full text-xs font-medium bg-yellow-50 text-yellow-600 border border-yellow-100" id="swap-pending-count">待审批 0</span>
+                        </div>
+                        <div id="swap-list" class="space-y-3 max-h-[600px] overflow-y-auto">
+                            <div class="text-center py-12 text-slate-400">
+                                <i class="fas fa-inbox text-4xl mb-3"></i>
+                                <p>暂无换班记录</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 人员管理 -->
+        <div id="tab-staff" class="tab-content hidden">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-lg font-bold text-slate-800">值班人员管理</h3>
+                    <button onclick="app.openStaffModal()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 transition">
+                        <i class="fas fa-plus mr-1"></i>添加人员
+                    </button>
+                </div>
+                <div id="staff-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+            </div>
+        </div>
+
+        <!-- 导入视图 -->
+        <div id="tab-import" class="tab-content hidden">
+            <div class="max-w-3xl mx-auto">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                    <div class="text-center mb-8">
+                        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
+                            <i class="fas fa-file-import text-2xl text-white"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-slate-800">导入值班表 Excel</h3>
+                        <p class="text-sm text-slate-400 mt-2">支持自动识别"正常值班"与"休息值班"，并判断日期属性</p>
+                    </div>
+                    <div class="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="document.getElementById('import-file').click()">
+                        <i class="fas fa-cloud-upload-alt text-4xl text-slate-300 mb-3"></i>
+                        <p class="text-slate-600 font-medium">点击或拖拽上传 Excel 文件</p>
+                        <p class="text-xs text-slate-400 mt-1">支持 .xlsx, .xls 格式</p>
+                        <input type="file" id="import-file" accept=".xlsx,.xls" class="hidden" onchange="app.handleImportFile(this)">
+                    </div>
+                    <div id="import-sheets-area" class="hidden mt-6">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="font-medium text-slate-700">选择要导入的Sheet</h4>
+                            <span class="text-xs text-slate-400" id="import-file-name"></span>
+                        </div>
+                        <div id="sheet-checkboxes" class="flex flex-wrap gap-3 mb-4"></div>
+                        <div class="border rounded-xl max-h-64 overflow-x-auto">
+                            <p class="text-xs text-slate-500 px-3 py-2 bg-slate-50 border-b">预览（点击Sheet名称切换预览）：</p>
+                            <table class="min-w-full text-xs" id="preview-table">
+                                <thead class="bg-slate-50 sticky top-0"></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div class="flex space-x-3 mt-4">
+                            <button onclick="app.confirmImport()" class="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-medium hover:bg-indigo-700 transition">确认导入</button>
+                            <button onclick="app.cancelImport()" class="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-medium hover:bg-slate-200 transition">取消</button>
+                        </div>
+                    </div>
+                    <div class="mt-8 bg-slate-50 rounded-xl p-4 text-sm text-slate-600">
+                        <p class="font-medium mb-2"><i class="fas fa-info-circle text-blue-500 mr-1"></i>导入说明</p>
+                        <ul class="space-y-1 text-xs text-slate-500">
+                            <li>• 系统会自动识别 Sheet 中的姓名、日期、值班类型（正常/休息）</li>
+                            <li>• 自动判断每个日期是工作日（周一至周五）还是休息日（周六周日）</li>
+                            <li>• 支持"短期正常夜班/短临正常夜班"等格式，自动归类为工作日值班</li>
+                            <li>• 支持"短期休息夜班/短临休息夜班"等格式，自动归类为休息日值班</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导出视图 -->
+        <div id="tab-export" class="tab-content hidden">
+            <div class="max-w-4xl mx-auto">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-800">选择导出月份</h3>
+                            <p class="text-sm text-slate-400 mt-1">可选择单个月份或多个月份批量导出</p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <input type="month" id="export-month-from" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value="2026-07">
+                            <span class="text-slate-400">至</span>
+                            <input type="month" id="export-month-to" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value="2026-07">
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-100 pt-4">
+                        <h4 class="text-sm font-medium text-slate-700 mb-3">选择要导出的岗位（不选则导出全部）</h4>
+                        <div id="export-post-filter" class="flex flex-wrap gap-3"></div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                    <div class="text-center mb-8">
+                        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
+                            <i class="fas fa-file-excel text-2xl text-white"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-slate-800">导出值班报表</h3>
+                        <p class="text-sm text-slate-400 mt-2">按所选月份和岗位导出 Excel 文件</p>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="border rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="app.exportToExcel()">
+                            <div class="flex items-center">
+                                <div class="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center mr-4">
+                                    <i class="fas fa-table text-green-600 text-xl"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <h4 class="font-medium text-slate-800">导出月度值班表</h4>
+                                    <p class="text-xs text-slate-400">包含日历排班、人员信息</p>
+                                </div>
+                                <span class="text-xs text-slate-400 mr-3" id="export-label-1">2026年7月</span>
+                                <i class="fas fa-chevron-right text-slate-300"></i>
+                            </div>
+                        </div>
+                        <div class="border rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="app.exportStatsToExcel()">
+                            <div class="flex items-center">
+                                <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mr-4">
+                                    <i class="fas fa-chart-bar text-blue-600 text-xl"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <h4 class="font-medium text-slate-800">导出统计报表（含明细）</h4>
+                                    <p class="text-xs text-slate-400">包含每个人具体值班日期、工作日/休息日天数统计</p>
+                                </div>
+                                <span class="text-xs text-slate-400 mr-3" id="export-label-2">2026年7月</span>
+                                <i class="fas fa-chevron-right text-slate-300"></i>
+                            </div>
+                        </div>
+                        <div class="border rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="app.exportMultiMonth()">
+                            <div class="flex items-center">
+                                <div class="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center mr-4">
+                                    <i class="fas fa-layer-group text-indigo-600 text-xl"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <h4 class="font-medium text-slate-800">批量导出多个月份</h4>
+                                    <p class="text-xs text-slate-400">将所选月份范围合并导出到一个 Excel 文件</p>
+                                </div>
+                                <span class="text-xs text-slate-400 mr-3" id="export-label-3">2026年7月</span>
+                                <i class="fas fa-chevron-right text-slate-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<!-- 人员模态框 -->
+<div id="staff-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
+    <div class="modal-content bg-white rounded-2xl p-6 w-96 shadow-2xl">
+        <h3 class="font-bold text-lg mb-4 text-slate-800">添加值班人员</h3>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">姓名</label>
+                <input id="staff-name" placeholder="请输入姓名" class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">默认岗位</label>
+                <select id="staff-post" class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition"></select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">联系方式</label>
+                <input id="staff-contact" placeholder="手机号/短号（可选）" class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition">
+            </div>
+            <div class="flex space-x-3 pt-2">
+                <button onclick="app.saveStaff()" class="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">保存</button>
+                <button onclick="app.closeModal('staff-modal')" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl font-medium hover:bg-slate-200 transition">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 日期详情模态框 -->
+<div id="day-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
+    <div class="modal-content bg-white rounded-2xl p-6 w-[520px] max-h-[85vh] overflow-y-auto shadow-2xl">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold text-lg text-slate-800" id="day-title">班次详情</h3>
+            <span id="day-type-badge" class="px-3 py-1 rounded-full text-xs font-medium"></span>
+        </div>
+        <div id="day-shifts" class="space-y-2 mb-6"></div>
+        <div class="border-t border-slate-100 pt-4">
+            <h4 class="text-sm font-semibold text-slate-600 mb-3">添加班次</h4>
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
+                    <select id="day-staff" class="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></select>
+                    <select id="day-post" class="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></select>
+                </div>
+                <div class="flex space-x-4 text-sm">
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="radio" name="day-shift-type" value="normal" checked class="text-blue-600">
+                        <span class="text-slate-600">工作日值班（正常）</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="radio" name="day-shift-type" value="rest" class="text-amber-600">
+                        <span class="text-slate-600">休息日值班</span>
+                    </label>
+                </div>
+                <button onclick="app.addDayShift()" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">
+                    <i class="fas fa-plus mr-1"></i>添加班次
+                </button>
+            </div>
+        </div>
+        <div class="flex justify-end mt-4">
+            <button onclick="app.closeModal('day-modal')" class="px-5 py-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition">关闭</button>
+        </div>
+    </div>
+</div>
+
+<!-- 自动排班模态框 -->
+<div id="generate-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
+    <div class="modal-content bg-white rounded-2xl p-6 w-[480px] shadow-2xl">
+        <h3 class="font-bold text-lg mb-4 text-slate-800">自动生成排班</h3>
+        <div class="space-y-4 text-sm">
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">月份</label>
+                <input type="month" id="gen-month" class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">排班规则</label>
+                <select id="gen-pattern" class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="cycle">循环轮班（公平分配）</option>
+                    <option value="random">随机分配</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-600 mb-1">要排的岗位</label>
+                <div id="gen-posts" class="mt-2 space-y-2 max-h-40 overflow-y-auto"></div>
+            </div>
+            <div class="flex space-x-3 pt-2">
+                <button onclick="app.generateSchedule()" class="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl font-medium hover:bg-indigo-700 transition">生成排班</button>
+                <button onclick="app.closeModal('generate-modal')" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl font-medium hover:bg-slate-200 transition">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+
+// ==================== Supabase 配置（已内置）====================
+// 配置已硬编码，换电脑无需重新输入
+// 如需修改数据库，请更改下面的 URL 和 KEY
+const SUPABASE_URL = 'https://phhfygjpefmrmqhlvupx.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoaGZ5Z2pwZWZtcm1xaGx2dXB4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NjYyNTMsImV4cCI6MjEwNDM0MjI1M30.fqUo3l7BU3pEZLK6Mnxbiyi9BtykoU9GmvaWHekK87w';
+
+let supabase = null;
+try {
+    if (window.supabase) {
+        supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        console.log('Supabase 已连接');
+    }
+} catch (err) {
+    console.error('Supabase 初始化失败:', err);
+}
+
+const USE_CLOUD = !!supabase;
+
+class DutyApp {
+    constructor() {
+        this.currentDate = new Date(2026, 6, 1);
+        this.posts = JSON.parse(localStorage.getItem('duty_posts')) || [];
+        this.staff = JSON.parse(localStorage.getItem('duty_staff')) || [];
+        this.schedule = JSON.parse(localStorage.getItem('duty_schedule')) || {};
+        this.swaps = JSON.parse(localStorage.getItem('duty_swaps')) || [];
+        this.history = [];
+        this.historyIndex = -1;
+        this.maxHistory = 50;
+        this.importWorkbook = null;
+        this.selectedDate = null;
+        this.currentTab = 'calendar';
+        this.isLoading = false;
+
+        // 默认岗位
+        this.defaultPosts = [
+            {id:'short', name:'短期主班'},
+            {id:'temp', name:'短临主班'},
+            {id:'service', name:'服务岗'},
+            {id:'chief', name:'首席岗'},
+            {id:'lead', name:'带班岗'},
+            {id:'director', name:'值班科长'},
+            {id:'boss', name:'带班领导'},
+            {id:'emergency', name:'应急值班'},
+            {id:'radar', name:'雷达班'},
+            {id:'team', name:'领班岗'}
+        ];
+
+        // 如果没有数据，加载演示数据
+        if (Object.keys(this.schedule).length === 0 && this.staff.length === 0) {
+            this.loadDemoData();
+        }
+
+        // 异步初始化（云端同步）
+        this.init().catch(err => {
+            console.error('云端同步失败，使用本地数据:', err);
+        });
+    }
+
+    // ==================== 初始化 ====================
+    async init() {
+        // 先渲染本地数据（确保页面不白屏）
+        this.renderPosts();
+        this.renderCalendar();
+        this.updateStats();
+        this.updateSidebar();
+        document.getElementById('gen-month').value = '2026-07';
+        document.getElementById('jump-month-input').value = '2026-07';
+        document.getElementById('export-month-from').value = '2026-07';
+        document.getElementById('export-month-to').value = '2026-07';
+        this.setupExportListeners();
+        this.pushHistory('初始状态');
+
+        // 自动同步云端数据
+        if (supabase) {
+            try {
+                await this.loadAllData();
+                this.renderPosts();
+                this.renderCalendar();
+                this.updateStats();
+                console.log('云端数据同步成功');
+            } catch (err) {
+                console.error('云端同步失败，使用本地数据:', err);
+            }
+        }
+    }
+
+    showConfigModal() {
+        document.getElementById('config-modal').classList.remove('hidden');
+    }
+
+    saveSupabaseConfig() {
+        const url = document.getElementById('sb-url').value.trim();
+        const key = document.getElementById('sb-key').value.trim();
+        if (!url || !key) return alert('请填写完整的 URL 和 Key');
+
+        localStorage.setItem('sb_url', url);
+        localStorage.setItem('sb_key', key);
+
+        supabase = window.supabase.createClient(url, key);
+        document.getElementById('config-modal').classList.add('hidden');
+        this.init();
+    }
+
+    // ==================== 数据加载（Supabase）====================
+    async loadAllData() {
+        this.showLoading('正在从云端加载数据...');
+        try {
+            // 加载岗位
+            const { data: postsData, error: postsError } = await supabase.from('posts').select('*').order('id');
+            if (postsError) {
+                console.error('岗位加载错误:', postsError);
+                throw new Error('岗位表访问失败: ' + postsError.message);
+            }
+            this.posts = postsData && postsData.length > 0 ? postsData : [...this.defaultPosts];
+
+            // 如果数据库没有岗位，初始化默认岗位
+            if (!postsData || postsData.length === 0) {
+                for (const p of this.defaultPosts) {
+                    await supabase.from('posts').insert({id: p.id, name: p.name});
+                }
+            }
+
+            // 加载人员
+            const { data: staffData, error: staffError } = await supabase.from('staff').select('*').order('id');
+            if (staffError) {
+                console.error('人员加载错误:', staffError);
+                throw new Error('人员表访问失败: ' + staffError.message);
+            }
+            this.staff = staffData || [];
+
+            // 加载排班
+            const { data: scheduleData, error: scheduleError } = await supabase.from('schedules').select('*');
+            if (scheduleError) {
+                console.error('排班加载错误:', scheduleError);
+                throw new Error('排班表访问失败: ' + scheduleError.message);
+            }
+            this.schedule = {};
+            if (scheduleData) {
+                scheduleData.forEach(s => {
+                    if (!this.schedule[s.date]) this.schedule[s.date] = [];
+                    this.schedule[s.date].push({
+                        staffId: s.staff_id,
+                        postId: s.post_id,
+                        shiftType: s.shift_type
+                    });
+                });
+            }
+
+            // 加载换班
+            const { data: swapsData, error: swapsError } = await supabase.from('swaps').select('*').order('created_at', {ascending: false});
+            if (swapsError) {
+                console.error('换班加载错误:', swapsError);
+                throw new Error('换班表访问失败: ' + swapsError.message);
+            }
+            this.swaps = swapsData || [];
+
+        } catch (err) {
+            console.error('加载数据失败:', err);
+            alert('连接数据库失败: ' + err.message + '\n\n可能原因:\n1. Supabase URL 或 Key 错误\n2. 数据库表未创建\n3. 网络连接问题\n\n请检查配置后刷新页面。');
+            throw err;
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    showLoading(text) {
+        document.getElementById('loading-text').textContent = text || '加载中...';
+        document.getElementById('global-loading').style.display = 'flex';
+    }
+
+    hideLoading() {
+        document.getElementById('global-loading').style.display = 'none';
+    }
+
+    // ==================== 数据保存（Supabase）====================
+    async savePosts() {
+        if (!supabase) return;
+        // 岗位一般不频繁变动，这里简化处理
+    }
+
+    async saveStaff() {
+        if (!supabase) return;
+        // 先清空再全量插入（简单可靠）
+        await supabase.from('staff').delete().neq('id', 0);
+        if (this.staff.length > 0) {
+            const records = this.staff.map(s => ({
+                id: s.id,
+                name: s.name,
+                post_id: s.postId,
+                contact: s.contact || ''
+            }));
+            const { error } = await supabase.from('staff').insert(records);
+            if (error) throw new Error('保存人员失败: ' + error.message);
+        }
+    }
+
+    async saveSchedule() {
+        if (!supabase) return;
+
+        const y = this.currentDate.getFullYear();
+        const m = this.currentDate.getMonth() + 1;
+        const monthPrefix = `${y}-${String(m).padStart(2,'0')}`;
+
+        // 先删除该月数据
+        const { error: delError } = await supabase.from('schedules').delete().like('date', `${monthPrefix}%`);
+        if (delError) {
+            console.error('删除旧排班失败:', delError);
+            throw new Error('删除旧排班失败: ' + delError.message);
+        }
+
+        // 收集要插入的数据
+        const inserts = [];
+        Object.keys(this.schedule).forEach(date => {
+            if (date.startsWith(monthPrefix)) {
+                this.schedule[date].forEach(sh => {
+                    inserts.push({
+                        date: date,
+                        staff_id: sh.staffId,
+                        post_id: sh.postId,
+                        shift_type: sh.shiftType
+                    });
+                });
+            }
+        });
+
+        // 批量插入
+        if (inserts.length > 0) {
+            console.log('准备插入排班:', inserts.length, '条');
+            const { error: insError } = await supabase.from('schedules').insert(inserts);
+            if (insError) {
+                console.error('插入排班失败:', insError);
+                throw new Error('插入排班失败: ' + insError.message);
+            }
+        }
+    }
+
+    async saveSwaps() {
+        if (!supabase) return;
+        await supabase.from('swaps').delete().neq('id', 0);
+        if (this.swaps.length > 0) {
+            const records = this.swaps.map(sw => ({
+                id: sw.id,
+                from_id: sw.fromId,
+                to_id: sw.toId,
+                from_date: sw.fromDate,
+                to_date: sw.toDate,
+                from_post_id: sw.fromPostId,
+                to_post_id: sw.toPostId,
+                from_name: sw.fromName,
+                to_name: sw.toName,
+                from_post_name: sw.fromPostName,
+                to_post_name: sw.toPostName,
+                reason: sw.reason,
+                status: sw.status,
+                created_at: sw.createdAt,
+                approved_at: sw.approvedAt || null
+            }));
+            const { error } = await supabase.from('swaps').insert(records);
+            if (error) throw new Error('保存换班记录失败: ' + error.message);
+        }
+    }
+
+    async save() {
+        // 先保存到本地（确保数据不丢失）
+        localStorage.setItem('duty_posts', JSON.stringify(this.posts));
+        localStorage.setItem('duty_staff', JSON.stringify(this.staff));
+        localStorage.setItem('duty_schedule', JSON.stringify(this.schedule));
+        localStorage.setItem('duty_swaps', JSON.stringify(this.swaps));
+
+        this.updateStats();
+        this.updateSidebar();
+        this.updateSwapBadge();
+
+        // 如果有云端，再同步到云端
+        if (supabase) {
+            this.showLoading('正在同步到云端...');
+            try {
+                await this.saveStaff();
+                await this.saveSchedule();
+                await this.saveSwaps();
+            } catch (err) {
+                console.error('云端同步失败:', err);
+                alert('云端同步失败，数据已保存到本地。\n错误: ' + err.message);
+            } finally {
+                this.hideLoading();
+            }
+        }
+    }
+
+    // ==================== 撤销/重做 ====================
+    pushHistory(desc) {
+        const snapshot = {
+            posts: JSON.parse(JSON.stringify(this.posts)),
+            staff: JSON.parse(JSON.stringify(this.staff)),
+            schedule: JSON.parse(JSON.stringify(this.schedule)),
+            swaps: JSON.parse(JSON.stringify(this.swaps)),
+            desc: desc,
+            time: new Date().toLocaleTimeString()
+        };
+        if (this.historyIndex < this.history.length - 1) {
+            this.history = this.history.slice(0, this.historyIndex + 1);
+        }
+        this.history.push(snapshot);
+        if (this.history.length > this.maxHistory) this.history.shift();
+        else this.historyIndex++;
+        this.updateUndoRedoButtons();
+    }
+
+    undo() {
+        if (this.historyIndex <= 0) return alert('没有可撤销的操作了');
+        this.historyIndex--;
+        this.restoreHistory();
+    }
+
+    redo() {
+        if (this.historyIndex >= this.history.length - 1) return alert('已是最新状态');
+        this.historyIndex++;
+        this.restoreHistory();
+    }
+
+    restoreHistory() {
+        const snap = this.history[this.historyIndex];
+        this.posts = JSON.parse(JSON.stringify(snap.posts));
+        this.staff = JSON.parse(JSON.stringify(snap.staff));
+        this.schedule = JSON.parse(JSON.stringify(snap.schedule));
+        this.swaps = JSON.parse(JSON.stringify(snap.swaps));
+        this.save();
+        this.renderPosts();
+        this.renderCalendar();
+        if (this.currentTab === 'swap') this.renderSwapPage();
+        if (this.currentTab === 'staff') this.renderStaffList();
+        this.updateUndoRedoButtons();
+    }
+
+    updateUndoRedoButtons() {
+        document.getElementById('btn-undo').disabled = this.historyIndex <= 0;
+        document.getElementById('btn-redo').disabled = this.historyIndex >= this.history.length - 1;
+    }
+
+    // ==================== 工具函数 ====================
+    isWeekend(dateStr) {
+        const d = new Date(dateStr);
+        return d.getDay() === 0 || d.getDay() === 6;
+    }
+
+    getWeekdayName(dateStr) {
+        return ['周日','周一','周二','周三','周四','周五','周六'][new Date(dateStr).getDay()];
+    }
+
+    getMonthDays(year, month) {
+        return new Date(year, month, 0).getDate();
+    }
+
+    formatDateStr(year, month, day) {
+        return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    }
+
+    getPost(id) { return this.posts.find(p => p.id === id); }
+    getStaff(id) { return this.staff.find(s => s.id === id); }
+
+    switchTab(tab) {
+        this.currentTab = tab;
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+        document.getElementById(`tab-${tab}`).classList.remove('hidden');
+        document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+        document.getElementById(`nav-${tab}`).classList.add('active');
+        const titles = {calendar:'日历排班', swap:'换班审批', staff:'人员管理', import:'数据导入', export:'报表导出'};
+        document.getElementById('page-title').textContent = titles[tab];
+        document.getElementById('page-badge').textContent = tab === 'calendar' ? '本月' : (tab === 'swap' ? '审批' : '管理');
+        if (tab === 'swap') this.renderSwapPage();
+        if (tab === 'staff') this.renderStaffList();
+    }
+
+    fillSelect(id, items, labelKey) {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = '';
+        items.forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item.id || item;
+            opt.textContent = item[labelKey] || item;
+            sel.appendChild(opt);
+        });
+    }
+
+    closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+    // ==================== 岗位管理 ====================
+    renderPosts() {
+        const legend = document.getElementById('legend-area');
+        legend.innerHTML = this.posts.map(p => 
+            `<div class="flex items-center bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                <span class="w-3 h-3 rounded-full mr-2 badge-${p.id}" style="display:inline-block;"></span>
+                <span class="text-slate-600">${p.name}</span>
+            </div>`
+        ).join('');
+        this.fillSelect('staff-post', this.posts, 'name');
+        this.fillSelect('day-post', this.posts, 'name');
+        const genPosts = document.getElementById('gen-posts');
+        genPosts.innerHTML = this.posts.map(p => 
+            `<label class="flex items-center p-2 hover:bg-slate-50 rounded-lg cursor-pointer">
+                <input type="checkbox" value="${p.id}" class="mr-3 w-4 h-4 text-blue-600 rounded gen-post-check" checked>
+                <span class="text-slate-700">${p.name}</span>
+            </label>`
+        ).join('');
+    }
+
+    // ==================== 人员管理 ====================
+    renderStaffList() {
+        const list = document.getElementById('staff-list');
+        if (!list) return;
+        list.innerHTML = '';
+        if (this.staff.length === 0) {
+            list.innerHTML = '<div class="col-span-full text-center py-12 text-slate-400"><i class="fas fa-users text-4xl mb-3"></i><p>暂无人员，点击右上角添加</p></div>';
+            return;
+        }
+        const stats = this.calcAllStats();
+        this.staff.forEach(s => {
+            const st = stats[s.id] || {workday:0, weekend:0, total:0, posts:new Set()};
+            const postNames = Array.from(st.posts);
+            const postHtml = postNames.length > 0 
+                ? postNames.map(pn => `<span class="px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-600 mr-1">${pn}</span>`).join('')
+                : '<span class="text-xs text-slate-400">未值班</span>';
+            const el = document.createElement('div');
+            el.className = 'bg-slate-50 rounded-xl p-4 border border-slate-100 hover:shadow-md transition';
+            el.innerHTML = `
+                <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold mr-3">${s.name.charAt(0)}</div>
+                        <div>
+                            <div class="font-bold text-slate-800">${s.name}</div>
+                            <div class="text-xs text-slate-500 mt-1">${postHtml}</div>
+                        </div>
+                    </div>
+                    <button onclick="app.deleteStaff(${s.id})" class="text-slate-300 hover:text-red-500 transition"><i class="fas fa-trash-alt"></i></button>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    <div class="bg-white rounded-lg p-2"><div class="text-lg font-bold text-blue-600">${st.workday}</div><div class="text-[10px] text-slate-400">工作日</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-lg font-bold text-amber-600">${st.weekend}</div><div class="text-[10px] text-slate-400">休息日</div></div>
+                    <div class="bg-white rounded-lg p-2"><div class="text-lg font-bold text-slate-700">${st.total}</div><div class="text-[10px] text-slate-400">总计</div></div>
+                </div>`;
+            list.appendChild(el);
+        });
+        this.fillSelect('day-staff', this.staff, 'name');
+    }
+
+    openStaffModal() { document.getElementById('staff-modal').classList.remove('hidden'); }
+
+    async saveStaff() {
+        const name = document.getElementById('staff-name').value.trim();
+        const postId = document.getElementById('staff-post').value;
+        const contact = document.getElementById('staff-contact').value.trim();
+        if (!name) return alert('请输入姓名');
+        this.pushHistory('添加人员：' + name);
+        const id = Date.now();
+        this.staff.push({id, name, postId, contact});
+        await this.save();
+        this.renderStaffList();
+        this.renderCalendar();
+        this.closeModal('staff-modal');
+        document.getElementById('staff-name').value = '';
+        document.getElementById('staff-contact').value = '';
+    }
+
+    async deleteStaff(id) {
+        if (!confirm('确定删除？相关排班将清空。')) return;
+        this.pushHistory('删除人员');
+        this.staff = this.staff.filter(s => s.id !== id);
+        Object.keys(this.schedule).forEach(d => {
+            this.schedule[d] = this.schedule[d].filter(s => s.staffId !== id);
+        });
+        await this.save();
+        this.renderStaffList();
+        this.renderCalendar();
+    }
+
+    // ==================== 日历 ====================
+    renderCalendar() {
+        const y = this.currentDate.getFullYear();
+        const m = this.currentDate.getMonth() + 1;
+        document.getElementById('current-month').textContent = `${y}年${m}月`;
+        document.getElementById('sidebar-month').textContent = `${y}年${m}月`;
+
+        const daysInMonth = this.getMonthDays(y, m);
+        let weekendCount = 0;
+        for (let d = 1; d <= daysInMonth; d++) {
+            if (this.isWeekend(this.formatDateStr(y, m, d))) weekendCount++;
+        }
+        document.getElementById('current-month-info').textContent = `本月共${daysInMonth}天，${weekendCount}天为休息日`;
+
+        const first = new Date(y, m - 1, 1);
+        const pad = first.getDay();
+        const grid = document.getElementById('calendar-grid');
+        grid.innerHTML = '';
+
+        for (let i = 0; i < pad; i++) {
+            const empty = document.createElement('div');
+            empty.className = 'min-h-[130px]';
+            grid.appendChild(empty);
+        }
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            const ds = this.formatDateStr(y, m, d);
+            const shifts = this.schedule[ds] || [];
+            const weekend = this.isWeekend(ds);
+            const today = this.isToday(y, m, d);
+            const weekdayName = this.getWeekdayName(ds);
+
+            const cell = document.createElement('div');
+            cell.className = `calendar-day p-3 border ${weekend ? 'weekend border-amber-200' : 'weekday border-slate-100'} ${today ? 'today' : ''}`;
+            cell.dataset.date = ds;
+            cell.onclick = () => this.openDayModal(ds);
+
+            const hd = document.createElement('div');
+            hd.className = 'flex justify-between items-center mb-2';
+            hd.innerHTML = `
+                <span class="font-bold text-sm ${today ? 'text-blue-600' : (weekend ? 'text-amber-700' : 'text-slate-700')}">${d}</span>
+                <span class="text-[10px] ${weekend ? 'text-amber-500' : 'text-slate-400'}">${weekdayName}</span>
+            `;
+            if (today) {
+                hd.innerHTML += `<span class="absolute top-2 right-2 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>`;
+            }
+            cell.appendChild(hd);
+
+            shifts.slice(0, 4).forEach(sh => {
+                const st = this.getStaff(sh.staffId);
+                const po = this.getPost(sh.postId);
+                if (st && po) {
+                    const badge = document.createElement('div');
+                    badge.className = `shift-badge badge-${sh.postId}`;
+                    badge.innerHTML = `
+                        <span class="font-medium">${po.name}:${st.name}</span>
+                        <span class="text-[10px] opacity-70 ml-1">${sh.shiftType === 'rest' ? '休' : '工'}</span>
+                    `;
+                    cell.appendChild(badge);
+                }
+            });
+
+            if (shifts.length > 4) {
+                const more = document.createElement('div');
+                more.className = 'text-[10px] text-slate-400 text-center mt-1';
+                more.textContent = `+${shifts.length - 4} 更多`;
+                cell.appendChild(more);
+            }
+            grid.appendChild(cell);
+        }
+    }
+
+    isToday(y, m, d) {
+        const t = new Date();
+        return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d;
+    }
+
+    changeMonth(delta) {
+        this.currentDate.setMonth(this.currentDate.getMonth() + delta);
+        this.renderCalendar();
+    }
+
+    jumpToMonth() {
+        const val = document.getElementById('jump-month-input').value;
+        if (!val) return;
+        const [y, m] = val.split('-').map(Number);
+        this.currentDate = new Date(y, m - 1, 1);
+        this.renderCalendar();
+    }
+
+    openDayModal(ds) {
+        this.selectedDate = ds;
+        const weekend = this.isWeekend(ds);
+        document.getElementById('day-title').textContent = `${ds} ${this.getWeekdayName(ds)} 班次详情`;
+        document.getElementById('day-type-badge').textContent = weekend ? '休息日' : '工作日';
+        document.getElementById('day-type-badge').className = `px-3 py-1 rounded-full text-xs font-medium ${weekend ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`;
+
+        const list = document.getElementById('day-shifts');
+        list.innerHTML = '';
+        const shifts = this.schedule[ds] || [];
+
+        if (!shifts.length) {
+            list.innerHTML = '<div class="text-center py-8 text-slate-400"><i class="fas fa-inbox text-3xl mb-2"></i><p>暂无排班</p></div>';
+        } else {
+            shifts.forEach((sh, idx) => {
+                const st = this.getStaff(sh.staffId);
+                const po = this.getPost(sh.postId);
+                const el = document.createElement('div');
+                el.className = `flex justify-between items-center p-3 rounded-xl text-sm ${sh.shiftType === 'rest' ? 'bg-amber-50 border border-amber-100' : 'bg-blue-50 border border-blue-100'}`;
+                el.innerHTML = `
+                    <div class="flex items-center">
+                        <div class="w-8 h-8 rounded-lg ${sh.shiftType === 'rest' ? 'bg-amber-200 text-amber-700' : 'bg-blue-200 text-blue-700'} flex items-center justify-center mr-3 font-bold text-xs">${sh.shiftType === 'rest' ? '休' : '工'}</div>
+                        <div>
+                            <div class="font-medium text-slate-700">${po?.name || ''}：${st?.name || '未知'}</div>
+                            <div class="text-xs text-slate-400">${sh.shiftType === 'rest' ? '休息日值班' : '工作日值班'}</div>
+                        </div>
+                    </div>
+                    <button onclick="app.removeShift('${ds}', ${idx})" class="text-slate-300 hover:text-red-500 transition"><i class="fas fa-trash-alt"></i></button>
+                `;
+                list.appendChild(el);
+            });
+        }
+        this.fillSelect('day-staff', this.staff, 'name');
+        document.getElementById('day-modal').classList.remove('hidden');
+    }
+
+    async addDayShift() {
+        const sid = parseInt(document.getElementById('day-staff').value);
+        const pid = document.getElementById('day-post').value;
+        const type = document.querySelector('input[name="day-shift-type"]:checked').value;
+        const ds = this.selectedDate;
+        if (!this.schedule[ds]) this.schedule[ds] = [];
+        if (this.schedule[ds].find(s => s.staffId === sid && s.postId === pid)) {
+            return alert('该人员此岗位已存在');
+        }
+        this.pushHistory('添加班次');
+        this.schedule[ds].push({staffId: sid, postId: pid, shiftType: type});
+        await this.save();
+        this.openDayModal(ds);
+        this.renderCalendar();
+    }
+
+    async removeShift(ds, idx) {
+        if (!confirm('确定删除此班次？')) return;
+        this.pushHistory('删除班次');
+        this.schedule[ds].splice(idx, 1);
+        if (!this.schedule[ds].length) delete this.schedule[ds];
+        await this.save();
+        this.renderCalendar();
+        this.openDayModal(ds);
+    }
+
+    // ==================== 统计 ====================
+    calcAllStats() {
+        const stats = {};
+        this.staff.forEach(s => { stats[s.id] = {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[], posts:new Set()}; });
+        Object.keys(this.schedule).forEach(ds => {
+            const isWeekend = this.isWeekend(ds);
+            this.schedule[ds].forEach(sh => {
+                if (stats[sh.staffId]) {
+                    const post = this.getPost(sh.postId);
+                    if (post) stats[sh.staffId].posts.add(post.name);
+                    if (isWeekend || sh.shiftType === 'rest') {
+                        stats[sh.staffId].weekend++;
+                        stats[sh.staffId].weekendDates.push(ds);
+                    } else {
+                        stats[sh.staffId].workday++;
+                        stats[sh.staffId].workdayDates.push(ds);
+                    }
+                    stats[sh.staffId].total++;
+                }
+            });
+        });
+        return stats;
+    }
+
+    calcMonthStats(year, month) {
+        return this.calcMonthStatsFiltered(year, month, this.posts.map(p => p.id));
+    }
+
+    calcMonthStatsFiltered(year, month, postIds) {
+        const stats = {};
+        this.staff.forEach(s => { 
+            stats[s.id] = {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[], posts:new Set()}; 
+        });
+        const days = this.getMonthDays(year, month);
+        for (let d = 1; d <= days; d++) {
+            const ds = this.formatDateStr(year, month, d);
+            const shifts = (this.schedule[ds] || []).filter(s => postIds.includes(s.postId));
+            const isWeekend = this.isWeekend(ds);
+            shifts.forEach(sh => {
+                if (stats[sh.staffId]) {
+                    const post = this.getPost(sh.postId);
+                    if (post) stats[sh.staffId].posts.add(post.name);
+                    if (isWeekend || sh.shiftType === 'rest') {
+                        stats[sh.staffId].weekend++;
+                        stats[sh.staffId].weekendDates.push(ds);
+                    } else {
+                        stats[sh.staffId].workday++;
+                        stats[sh.staffId].workdayDates.push(ds);
+                    }
+                    stats[sh.staffId].total++;
+                }
+            });
+        }
+        return stats;
+    }
+
+    updateStats() {
+        const y = this.currentDate.getFullYear();
+        const m = this.currentDate.getMonth() + 1;
+        const days = this.getMonthDays(y, m);
+        let total = 0, workday = 0, weekend = 0;
+        for (let d = 1; d <= days; d++) {
+            const ds = this.formatDateStr(y, m, d);
+            const shifts = this.schedule[ds] || [];
+            total += shifts.length;
+            if (this.isWeekend(ds)) weekend += shifts.length;
+            else workday += shifts.length;
+        }
+        document.getElementById('stat-total').textContent = total;
+        document.getElementById('stat-workday').textContent = workday;
+        document.getElementById('stat-weekend').textContent = weekend;
+        document.getElementById('stat-staff').textContent = this.staff.length;
+        this.updateSwapBadge();
+    }
+
+    updateSidebar() {
+        const y = this.currentDate.getFullYear();
+        const m = this.currentDate.getMonth() + 1;
+        document.getElementById('sidebar-month').textContent = `${y}年${m}月`;
+    }
+
+    async syncFromCloud() {
+        if (!supabase) return alert('云端未连接');
+        this.showLoading('正在同步云端数据...');
+        try {
+            await this.loadAllData();
+            this.renderPosts();
+            this.renderCalendar();
+            this.updateStats();
+            this.renderStaffList();
+            alert('云端同步成功！');
+        } catch (err) {
+            alert('同步失败: ' + err.message);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    updateSwapBadge() {
+        const pending = this.swaps.filter(s => s.status === 'pending').length;
+        const badge = document.getElementById('swap-badge');
+        const count = document.getElementById('swap-count');
+        const pendingCount = document.getElementById('swap-pending-count');
+        if (badge && count) {
+            if (pending > 0) {
+                badge.classList.remove('hidden');
+                count.textContent = pending;
+            } else {
+                badge.classList.add('hidden');
+            }
+        }
+        if (pendingCount) {
+            pendingCount.textContent = `待审批 ${pending}`;
+        }
+    }
+
+    // ==================== 自动排班 ====================
+    openGenerateModal() { document.getElementById('generate-modal').classList.remove('hidden'); }
+
+    async generateSchedule() {
+        const monthStr = document.getElementById('gen-month').value;
+        const pattern = document.getElementById('gen-pattern').value;
+        const checked = [...document.querySelectorAll('.gen-post-check:checked')].map(c => c.value);
+        if (!checked.length) return alert('请至少选一个岗位');
+        if (!this.staff.length) return alert('请先添加人员');
+
+        this.pushHistory('自动生成排班');
+        const [y, m] = monthStr.split('-').map(Number);
+        const days = this.getMonthDays(y, m);
+
+        for (let d = 1; d <= days; d++) {
+            const ds = this.formatDateStr(y, m, d);
+            delete this.schedule[ds];
+        }
+
+        let idx = 0;
+        for (let d = 1; d <= days; d++) {
+            const ds = this.formatDateStr(y, m, d);
+            const isWeekend = this.isWeekend(ds);
+            this.schedule[ds] = [];
+            checked.forEach(pid => {
+                const pool = this.staff.filter(s => s.postId === pid);
+                if (!pool.length) pool.push(...this.staff);
+                let sel;
+                if (pattern === 'cycle') { sel = pool[idx % pool.length]; idx++; }
+                else sel = pool[Math.floor(Math.random() * pool.length)];
+                if (sel && !this.schedule[ds].find(s => s.staffId === sel.id && s.postId === pid)) {
+                    this.schedule[ds].push({staffId: sel.id, postId: pid, shiftType: isWeekend ? 'rest' : 'normal'});
+                }
+            });
+        }
+        await this.save();
+        this.currentDate = new Date(y, m - 1, 1);
+        this.renderCalendar();
+        this.closeModal('generate-modal');
+        alert('生成成功！');
+    }
+
+    // ==================== 换班功能 ====================
+    renderSwapPage() {
+        this.fillSelect('swap-from', this.staff, 'name');
+        this.fillSelect('swap-to', this.staff, 'name');
+
+        ['swap-from', 'swap-to'].forEach(id => {
+            const sel = document.getElementById(id);
+            if (sel && sel.options.length > 0) {
+                const opt = document.createElement('option');
+                opt.value = ''; opt.textContent = '-- 选择人员 --';
+                sel.insertBefore(opt, sel.firstChild);
+                sel.value = '';
+            }
+        });
+
+        document.getElementById('swap-from-shift').innerHTML = '<option value="">先选择人员</option>';
+        document.getElementById('swap-from-shift').disabled = true;
+        document.getElementById('swap-to-shift').innerHTML = '<option value="">先选择人员</option>';
+        document.getElementById('swap-to-shift').disabled = true;
+        document.getElementById('swap-reason').value = '';
+
+        this.renderSwapList();
+    }
+
+    loadSwapShifts(type) {
+        const personId = parseInt(document.getElementById(`swap-${type}`).value);
+        const shiftSelect = document.getElementById(`swap-${type}-shift`);
+        shiftSelect.innerHTML = '<option value="">-- 选择班次 --</option>';
+        if (!personId) {
+            shiftSelect.disabled = true;
+            return;
+        }
+        const shifts = [];
+        Object.keys(this.schedule).sort().forEach(date => {
+            (this.schedule[date] || []).forEach(sh => {
+                if (sh.staffId === personId) {
+                    const po = this.getPost(sh.postId);
+                    const weekday = this.getWeekdayName(date);
+                    const typeLabel = sh.shiftType === 'rest' ? '【休】' : '【工】';
+                    shifts.push({date, postId: sh.postId, label: `${date} ${weekday} ${po?.name || ''}${typeLabel}`});
+                }
+            });
+        });
+        shifts.forEach(sh => {
+            const opt = document.createElement('option');
+            opt.value = `${sh.date}|${sh.postId}`;
+            opt.textContent = sh.label;
+            shiftSelect.appendChild(opt);
+        });
+        shiftSelect.disabled = false;
+    }
+
+    async requestSwap() {
+        const fromId = parseInt(document.getElementById('swap-from').value);
+        const toId = parseInt(document.getElementById('swap-to').value);
+        const fromShift = document.getElementById('swap-from-shift').value;
+        const toShift = document.getElementById('swap-to-shift').value;
+        const reason = document.getElementById('swap-reason').value;
+
+        if (!fromId || !toId) return alert('请选择双方人员');
+        if (fromId === toId) return alert('不能和自己换班');
+        if (!fromShift || !toShift) return alert('请选择双方要交换的班次');
+
+        const [fromDate, fromPostId] = fromShift.split('|');
+        const [toDate, toPostId] = toShift.split('|');
+
+        const fromSt = this.getStaff(fromId);
+        const toSt = this.getStaff(toId);
+
+        const fromHas = (this.schedule[fromDate]||[]).find(s => s.staffId === fromId && s.postId === fromPostId);
+        const toHas = (this.schedule[toDate]||[]).find(s => s.staffId === toId && s.postId === toPostId);
+        if (!fromHas) return alert(`${fromSt.name} 在所选日期没有该岗位`);
+        if (!toHas) return alert(`${toSt.name} 在所选日期没有该岗位`);
+
+        this.pushHistory('申请换班');
+        this.swaps.push({
+            id: Date.now(),
+            fromId, toId, fromDate, toDate, fromPostId, toPostId,
+            fromName: fromSt.name, toName: toSt.name,
+            fromPostName: this.getPost(fromPostId)?.name,
+            toPostName: this.getPost(toPostId)?.name,
+            reason, status: 'pending', createdAt: new Date().toISOString()
+        });
+        await this.save();
+        this.renderSwapList();
+
+        document.getElementById('swap-from').value = '';
+        document.getElementById('swap-to').value = '';
+        document.getElementById('swap-from-shift').innerHTML = '<option value="">先选择人员</option>';
+        document.getElementById('swap-from-shift').disabled = true;
+        document.getElementById('swap-to-shift').innerHTML = '<option value="">先选择人员</option>';
+        document.getElementById('swap-to-shift').disabled = true;
+        document.getElementById('swap-reason').value = '';
+
+        alert('换班申请已提交，等待审批！');
+    }
+
+    renderSwapList() {
+        const list = document.getElementById('swap-list');
+        if (!list) return;
+        list.innerHTML = '';
+
+        if (!this.swaps.length) {
+            list.innerHTML = '<div class="text-center py-12 text-slate-400"><i class="fas fa-inbox text-4xl mb-3"></i><p>暂无换班记录</p></div>';
+            return;
+        }
+
+        [...this.swaps].reverse().forEach(sw => {
+            const el = document.createElement('div');
+            const statusMap = {pending:'待审批', approved:'已通过', rejected:'已拒绝'};
+            const colorMap = {pending:'bg-yellow-50 border-yellow-200 text-yellow-700', approved:'bg-green-50 border-green-200 text-green-700', rejected:'bg-red-50 border-red-200 text-red-700'};
+            const badgeColor = {pending:'bg-yellow-100 text-yellow-700', approved:'bg-green-100 text-green-700', rejected:'bg-red-100 text-red-700'};
+
+            el.className = `p-4 rounded-xl border ${colorMap[sw.status]}`;
+            el.innerHTML = `
+                <div class="flex justify-between items-start mb-2">
+                    <div class="text-sm">
+                        <span class="font-bold">${sw.fromName}</span> 
+                        <span class="text-slate-400">(${sw.fromDate} ${sw.fromPostName})</span>
+                        <span class="mx-2 text-slate-300">↔</span>
+                        <span class="font-bold">${sw.toName}</span>
+                        <span class="text-slate-400">(${sw.toDate} ${sw.toPostName})</span>
+                    </div>
+                    <span class="px-2 py-1 rounded-lg text-xs font-medium ${badgeColor[sw.status]}">${statusMap[sw.status]}</span>
+                </div>
+                <div class="text-xs text-slate-500 mb-2">原因：${sw.reason || '无'}</div>
+                <div class="text-xs text-slate-400">申请时间：${new Date(sw.createdAt).toLocaleString()}</div>
+            `;
+
+            if (sw.status === 'pending') {
+                const btnDiv = document.createElement('div');
+                btnDiv.className = 'flex space-x-2 mt-3';
+                btnDiv.innerHTML = `
+                    <button onclick="app.approveSwap(${sw.id})" class="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 rounded-lg text-sm font-medium transition">同意</button>
+                    <button onclick="app.rejectSwap(${sw.id})" class="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm font-medium transition">拒绝</button>
+                `;
+                el.appendChild(btnDiv);
+            }
+
+            list.appendChild(el);
+        });
+    }
+
+    async approveSwap(id) {
+        const sw = this.swaps.find(s => s.id === id);
+        if (!sw) return;
+
+        const fromShifts = this.schedule[sw.fromDate] || [];
+        const toShifts = this.schedule[sw.toDate] || [];
+
+        const fromIdx = fromShifts.findIndex(s => s.staffId === sw.fromId && s.postId === sw.fromPostId);
+        const toIdx = toShifts.findIndex(s => s.staffId === sw.toId && s.postId === sw.toPostId);
+
+        if (fromIdx === -1) return alert('申请人的班次已不存在，无法换班');
+        if (toIdx === -1) return alert('对方的班次已不存在，无法换班');
+
+        if (sw.fromDate !== sw.toDate) {
+            const bHasFromPost = (this.schedule[sw.fromDate]||[]).find(s => s.staffId === sw.toId && s.postId === sw.fromPostId);
+            const aHasToPost = (this.schedule[sw.toDate]||[]).find(s => s.staffId === sw.fromId && s.postId === sw.toPostId);
+            if (bHasFromPost) return alert(`${sw.toName} 在 ${sw.fromDate} 已有 ${sw.fromPostName}，无法接收`);
+            if (aHasToPost) return alert(`${sw.fromName} 在 ${sw.toDate} 已有 ${sw.toPostName}，无法接收`);
+        }
+
+        this.pushHistory('同意换班');
+        fromShifts[fromIdx].staffId = sw.toId;
+        toShifts[toIdx].staffId = sw.fromId;
+
+        sw.status = 'approved';
+        sw.approvedAt = new Date().toISOString();
+        await this.save();
+        this.renderCalendar();
+        this.renderSwapList();
+        alert('已同意换班！');
+    }
+
+    async rejectSwap(id) {
+        this.pushHistory('拒绝换班');
+        const sw = this.swaps.find(s => s.id === id);
+        if (sw) { sw.status='rejected'; sw.approvedAt = new Date().toISOString(); await this.save(); this.renderSwapList(); }
+    }
+
+    // ==================== 导入功能 ====================
+    handleImportFile(input) {
+        const file = input.files[0];
+        if (!file) return;
+        document.getElementById('import-file-name').textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                this.importWorkbook = XLSX.read(data, {type: 'array'});
+
+                const sheetBox = document.getElementById('sheet-checkboxes');
+                sheetBox.innerHTML = this.importWorkbook.SheetNames.map((name, i) => 
+                    `<label class="flex items-center bg-white px-3 py-2 rounded-lg border border-slate-200 cursor-pointer hover:border-blue-300 transition">
+                        <input type="checkbox" class="sheet-check mr-2 w-4 h-4 text-blue-600 rounded" value="${name}" ${i===0?'checked':''} onchange="app.previewSheet('${name}')">
+                        <span class="text-sm text-slate-700">${name}</span>
+                    </label>`
+                ).join('');
+
+                const firstSheet = this.importWorkbook.SheetNames[0];
+                this.previewSheet(firstSheet);
+                document.getElementById('import-sheets-area').classList.remove('hidden');
+            } catch(err) { alert('读取失败：' + err.message); }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    previewSheet(sheetName) {
+        const ws = this.importWorkbook.Sheets[sheetName];
+        const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        const preview = json.slice(0, 6);
+        const thead = document.querySelector('#preview-table thead');
+        const tbody = document.querySelector('#preview-table tbody');
+        if (preview.length) {
+            thead.innerHTML = '<tr>' + preview[0].map((c, i) => `<th class="px-3 py-2 border text-left bg-slate-100">列${i+1}</th>`).join('') + '</tr>';
+            tbody.innerHTML = preview.slice(1).map(row => 
+                '<tr>' + row.map(c => `<td class="px-3 py-2 border">${c}</td>`).join('') + '</tr>'
+            ).join('');
+        }
+    }
+
+    cancelImport() {
+        document.getElementById('import-sheets-area').classList.add('hidden');
+        document.getElementById('import-file').value = '';
+        this.importWorkbook = null;
+    }
+
+    async confirmImport() {
+        if (!this.importWorkbook) return;
+
+        const selectedSheets = [...document.querySelectorAll('.sheet-check:checked')].map(c => c.value);
+        if (!selectedSheets.length) return alert('请至少选择一个Sheet');
+
+        this.pushHistory('导入Excel');
+
+        const nameToId = {};
+        this.staff.forEach(s => nameToId[s.name] = s.id);
+
+        const getOrCreateStaff = (name, defaultPostId) => {
+            if (!name) return null;
+            name = String(name).replace(/\s+/g, '').trim();
+            if (!name || name === '-' || name === '无' || name === 'NaN') return null;
+            if (nameToId[name]) return nameToId[name];
+            const id = Date.now() + Math.floor(Math.random() * 100000);
+            this.staff.push({id, name, postId: defaultPostId, contact: ''});
+            nameToId[name] = id;
+            return id;
+        };
+
+        const postMap = {};
+        this.posts.forEach(p => {
+            postMap[p.name] = p.id;
+            if (p.name === '短期主班') { postMap['短期岗'] = p.id; postMap['短期'] = p.id; }
+            if (p.name === '短临主班') { postMap['短临岗'] = p.id; postMap['短临'] = p.id; }
+        });
+
+        let count = 0;
+        const year = 2026;
+
+        selectedSheets.forEach(sheetName => {
+            const ws = this.importWorkbook.Sheets[sheetName];
+            const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+            if (json.length < 2) return;
+
+            let sheetMonth = null;
+            const m = sheetName.match(/(\d{1,2})\s*月/);
+            if (m) sheetMonth = parseInt(m[1]);
+
+            let headerRow = -1;
+            let colMap = {};
+
+            for (let r = 0; r < Math.min(8, json.length); r++) {
+                const row = json[r];
+                let hasDate = false, mapped = 0;
+                row.forEach((cell, c) => {
+                    const val = String(cell).trim();
+                    if (/日期|时间|date|日/i.test(val)) { colMap[c] = 'date'; hasDate = true; }
+                    else if (postMap[val]) { colMap[c] = {postId: postMap[val], type: 'normal'}; mapped++; }
+                    else if (val.includes('正常') && val.includes('短期')) { colMap[c] = {postId: postMap['短期主班'], type: 'normal'}; mapped++; }
+                    else if (val.includes('正常') && val.includes('短临')) { colMap[c] = {postId: postMap['短临主班'], type: 'normal'}; mapped++; }
+                    else if (val.includes('休息') && val.includes('短期')) { colMap[c] = {postId: postMap['短期主班'], type: 'rest'}; mapped++; }
+                    else if (val.includes('休息') && val.includes('短临')) { colMap[c] = {postId: postMap['短临主班'], type: 'rest'}; mapped++; }
+                    else if (val.includes('大夜班') && val.includes('正常')) { colMap[c] = {postId: postMap['短期主班'] || 'short', type: 'normal'}; mapped++; }
+                    else if (val.includes('大夜班') && val.includes('休息')) { colMap[c] = {postId: postMap['短期主班'] || 'short', type: 'rest'}; mapped++; }
+                    else if (val.includes('小夜班') && val.includes('正常')) { colMap[c] = {postId: postMap['短临主班'] || 'temp', type: 'normal'}; mapped++; }
+                    else if (val.includes('小夜班') && val.includes('休息')) { colMap[c] = {postId: postMap['短临主班'] || 'temp', type: 'rest'}; mapped++; }
+                });
+                if ((hasDate && mapped > 0) || mapped >= 2) { headerRow = r; break; }
+            }
+
+            if (headerRow === -1) return;
+
+            let currentPerson = null;
+            let currentMonth = sheetMonth || 7;
+
+            for (let r = headerRow + 1; r < json.length; r++) {
+                const row = json[r];
+                const rowStr = row.join('');
+                const monthMatch = rowStr.match(/(\d{1,2})\s*月/);
+                if (monthMatch && !rowStr.includes('日') && rowStr.length < 20) {
+                    currentMonth = parseInt(monthMatch[1]);
+                    continue;
+                }
+
+                if (row[0] && String(row[0]).trim() && !String(row[0]).includes('合计') && !String(row[0]).includes('签字') && !String(row[0]).includes('备注')) {
+                    currentPerson = String(row[0]).trim();
+                }
+
+                if (!currentPerson) continue;
+
+                let dateVal = null;
+                for (let c = 0; c < row.length; c++) {
+                    if (colMap[c] === 'date') {
+                        dateVal = String(row[c]).trim().replace('日', '');
+                        break;
+                    }
+                }
+                if (!dateVal || isNaN(parseInt(dateVal))) continue;
+
+                const day = parseInt(dateVal);
+                const ds = `${year}-${String(currentMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                if (!this.schedule[ds]) this.schedule[ds] = [];
+
+                Object.keys(colMap).forEach(c => {
+                    const colInfo = colMap[c];
+                    if (colInfo === 'date') return;
+                    const name = String(row[c] || '').trim();
+                    if (!name || name === '-' || name === '无' || name === 'NaN') return;
+
+                    const staffName = (row[0] && String(row[0]).trim() && !String(row[0]).includes('合计')) ? String(row[0]).trim() : currentPerson;
+                    const sid = getOrCreateStaff(staffName, colInfo.postId);
+                    if (sid && !this.schedule[ds].find(s => s.staffId === sid && s.postId === colInfo.postId)) {
+                        this.schedule[ds].push({staffId: sid, postId: colInfo.postId, shiftType: colInfo.type});
+                        count++;
+                    }
+                });
+            }
+        });
+
+        try {
+            await this.save();
+            this.renderStaffList();
+            this.renderCalendar();
+            this.cancelImport();
+            alert(`导入完成！新增/更新 ${count} 条排班记录。`);
+            this.switchTab('calendar');
+        } catch (err) {
+            console.error('导入保存失败:', err);
+            alert('导入失败: ' + err.message + '\n数据可能已保存到本地，请刷新页面查看。');
+        }
+    }
+
+    // ==================== 导出功能 ====================
+    setupExportListeners() {
+        const filterContainer = document.getElementById('export-post-filter');
+        filterContainer.innerHTML = this.posts.map(p => 
+            `<label class="flex items-center bg-white px-3 py-2 rounded-lg border border-slate-200 cursor-pointer hover:border-blue-300 transition">
+                <input type="checkbox" value="${p.id}" class="export-post-check mr-2 w-4 h-4 text-blue-600 rounded" checked>
+                <span class="text-sm text-slate-700">${p.name}</span>
+            </label>`
+        ).join('');
+
+        const updateLabels = () => {
+            const from = document.getElementById('export-month-from').value;
+            const to = document.getElementById('export-month-to').value;
+            let label = '';
+            if (from === to) {
+                const [y, m] = from.split('-');
+                label = `${y}年${parseInt(m)}月`;
+            } else {
+                const [fy, fm] = from.split('-');
+                const [ty, tm] = to.split('-');
+                label = `${fy}年${parseInt(fm)}月 ~ ${ty}年${parseInt(tm)}月`;
+            }
+            document.getElementById('export-label-1').textContent = label;
+            document.getElementById('export-label-2').textContent = label;
+            document.getElementById('export-label-3').textContent = label;
+        };
+        document.getElementById('export-month-from').addEventListener('change', updateLabels);
+        document.getElementById('export-month-to').addEventListener('change', updateLabels);
+    }
+
+    getSelectedExportPosts() {
+        const checked = [...document.querySelectorAll('.export-post-check:checked')].map(c => c.value);
+        return checked.length > 0 ? checked : this.posts.map(p => p.id);
+    }
+
+    exportToExcel() {
+        const monthStr = document.getElementById('export-month-from').value;
+        const [y, m] = monthStr.split('-').map(Number);
+        const days = this.getMonthDays(y, m);
+        const selectedPosts = this.getSelectedExportPosts();
+        const filteredPosts = this.posts.filter(p => selectedPosts.includes(p.id));
+
+        const wb = XLSX.utils.book_new();
+
+        const header = ['日期', '星期', '类型', ...filteredPosts.map(p => p.name), '备注'];
+        const data = [header];
+        for (let d = 1; d <= days; d++) {
+            const ds = this.formatDateStr(y, m, d);
+            const wk = ['日','一','二','三','四','五','六'][new Date(y, m-1, d).getDay()];
+            const isWeekend = this.isWeekend(ds);
+            const shifts = (this.schedule[ds] || []).filter(s => selectedPosts.includes(s.postId));
+            const row = [ds, wk, isWeekend ? '休息日' : '工作日'];
+            filteredPosts.forEach(p => {
+                const names = shifts.filter(s => s.postId === p.id).map(s => {
+                    const st = this.staff.find(x => x.id === s.staffId);
+                    const typeLabel = s.shiftType === 'rest' ? '(休)' : '(工)';
+                    return st ? st.name + typeLabel : '';
+                }).join(', ');
+                row.push(names);
+            });
+            row.push('');
+            data.push(row);
+        }
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        ws['!cols'] = [{wch:12},{wch:6},{wch:8}, ...filteredPosts.map(() => ({wch:15})), {wch:20}];
+        XLSX.utils.book_append_sheet(wb, ws, `${m}月值班表`);
+
+        const stats = this.calcMonthStatsFiltered(y, m, selectedPosts);
+        const stData = [['姓名', '实际值班岗位', '工作日值班天数', '休息日值班天数', '总天数', '占比', '工作日值班日期', '休息日值班日期']];
+        let totalAll = 0;
+        this.staff.forEach(s => {
+            const st = stats[s.id] || {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[]};
+            totalAll += st.total;
+        });
+        this.staff.forEach(s => {
+            const st = stats[s.id] || {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[], posts:new Set()};
+            const postNames = Array.from(st.posts).join('、') || '-';
+            const percent = totalAll > 0 ? ((st.total / totalAll) * 100).toFixed(1) + '%' : '0%';
+            const workdayDatesStr = st.workdayDates.sort().join('、') || '-';
+            const weekendDatesStr = st.weekendDates.sort().join('、') || '-';
+            stData.push([s.name, postNames, st.workday, st.weekend, st.total, percent, workdayDatesStr, weekendDatesStr]);
+        });
+        const ws2 = XLSX.utils.aoa_to_sheet(stData);
+        ws2['!cols'] = [{wch:10},{wch:20},{wch:16},{wch:16},{wch:10},{wch:10},{wch:40},{wch:40}];
+        XLSX.utils.book_append_sheet(wb, ws2, '人员统计');
+
+        XLSX.writeFile(wb, `值班表_${y}年${m}月.xlsx`);
+    }
+
+    exportStatsToExcel() {
+        const monthStr = document.getElementById('export-month-from').value;
+        const [y, m] = monthStr.split('-').map(Number);
+        const selectedPosts = this.getSelectedExportPosts();
+        const stats = this.calcMonthStatsFiltered(y, m, selectedPosts);
+
+        const wb = XLSX.utils.book_new();
+
+        const data = [['气象台值班统计报表'], [`统计月份：${y}年${m}月`], ['生成时间：' + new Date().toLocaleString()], []];
+        data.push(['姓名', '实际值班岗位', '工作日值班（天）', '休息日值班（天）', '总天数', '占比', '备注']);
+
+        let totalWorkday = 0, totalWeekend = 0, totalAll = 0;
+        this.staff.forEach(s => {
+            const st = stats[s.id] || {workday:0, weekend:0, total:0};
+            totalWorkday += st.workday;
+            totalWeekend += st.weekend;
+            totalAll += st.total;
+        });
+
+        this.staff.forEach(s => {
+            const st = stats[s.id] || {workday:0, weekend:0, total:0, posts:new Set()};
+            const postNames = Array.from(st.posts).join('、') || '-';
+            const percent = totalAll > 0 ? ((st.total / totalAll) * 100).toFixed(1) + '%' : '0%';
+            data.push([s.name, postNames, st.workday, st.weekend, st.total, percent, '']);
+        });
+
+        data.push([]);
+        data.push(['合计', '', totalWorkday, totalWeekend, totalAll, '100%', '']);
+        data.push([]);
+        data.push(['说明：工作日指周一至周五，休息日指周六周日']);
+
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        ws['!cols'] = [{wch:12},{wch:20},{wch:18},{wch:18},{wch:10},{wch:10},{wch:30}];
+        XLSX.utils.book_append_sheet(wb, ws, '统计汇总');
+
+        const detailData = [['姓名', '实际值班岗位', '值班日期', '星期', '类型', '备注']];
+        this.staff.forEach(s => {
+            const st = stats[s.id] || {workdayDates:[], weekendDates:[], posts:new Set()};
+            const postNames = Array.from(st.posts).join('、') || '-';
+            const allDates = [...st.workdayDates, ...st.weekendDates].sort();
+            if (allDates.length === 0) {
+                detailData.push([s.name, postNames, '-', '-', '-', '本月无排班']);
+            } else {
+                allDates.forEach(ds => {
+                    const isWeekend = this.isWeekend(ds);
+                    const weekday = this.getWeekdayName(ds);
+                    detailData.push([s.name, postNames, ds, weekday, isWeekend ? '休息日值班' : '工作日值班', '']);
+                });
+            }
+        });
+        const ws2 = XLSX.utils.aoa_to_sheet(detailData);
+        ws2['!cols'] = [{wch:10},{wch:20},{wch:12},{wch:8},{wch:14},{wch:20}];
+        XLSX.utils.book_append_sheet(wb, ws2, '值班明细');
+
+        const summaryData = [['姓名', '实际值班岗位', '工作日值班日期', '休息日值班日期', '总天数']];
+        this.staff.forEach(s => {
+            const st = stats[s.id] || {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[], posts:new Set()};
+            const postNames = Array.from(st.posts).join('、') || '-';
+            const workdayStr = st.workdayDates.sort().join('、') || '无';
+            const weekendStr = st.weekendDates.sort().join('、') || '无';
+            summaryData.push([s.name, postNames, workdayStr, weekendStr, st.total]);
+        });
+        const ws3 = XLSX.utils.aoa_to_sheet(summaryData);
+        ws3['!cols'] = [{wch:10},{wch:20},{wch:50},{wch:50},{wch:10}];
+        XLSX.utils.book_append_sheet(wb, ws3, '日期汇总');
+
+        XLSX.writeFile(wb, `值班统计_${y}年${m}月.xlsx`);
+    }
+
+    exportMultiMonth() {
+        const fromStr = document.getElementById('export-month-from').value;
+        const toStr = document.getElementById('export-month-to').value;
+        if (!fromStr || !toStr) return alert('请选择月份范围');
+
+        const [fromYear, fromMonth] = fromStr.split('-').map(Number);
+        const [toYear, toMonth] = toStr.split('-').map(Number);
+
+        if (fromYear > toYear || (fromYear === toYear && fromMonth > toMonth)) {
+            return alert('开始月份不能晚于结束月份');
+        }
+
+        const selectedPosts = this.getSelectedExportPosts();
+        const wb = XLSX.utils.book_new();
+        let currentYear = fromYear;
+        let currentMonth = fromMonth;
+
+        while (currentYear < toYear || (currentYear === toYear && currentMonth <= toMonth)) {
+            const stats = this.calcMonthStatsFiltered(currentYear, currentMonth, selectedPosts);
+
+            const data = [[`${currentYear}年${currentMonth}月值班统计`], ['姓名', '实际值班岗位', '工作日值班（天）', '休息日值班（天）', '总天数', '占比']];
+
+            let totalWorkday = 0, totalWeekend = 0, totalAll = 0;
+            this.staff.forEach(s => {
+                const st = stats[s.id] || {workday:0, weekend:0, total:0};
+                totalWorkday += st.workday;
+                totalWeekend += st.weekend;
+                totalAll += st.total;
+            });
+
+            this.staff.forEach(s => {
+                const st = stats[s.id] || {workday:0, weekend:0, total:0, posts:new Set()};
+                const postNames = Array.from(st.posts).join('、') || '-';
+                const percent = totalAll > 0 ? ((st.total / totalAll) * 100).toFixed(1) + '%' : '0%';
+                data.push([s.name, postNames, st.workday, st.weekend, st.total, percent]);
+            });
+
+            data.push([]);
+            data.push(['合计', '', totalWorkday, totalWeekend, totalAll, '100%']);
+
+            const ws = XLSX.utils.aoa_to_sheet(data);
+            ws['!cols'] = [{wch:12},{wch:20},{wch:18},{wch:18},{wch:10},{wch:10}];
+            XLSX.utils.book_append_sheet(wb, ws, `${currentMonth}月统计`);
+
+            const summaryData = [['姓名', '实际值班岗位', '工作日值班日期', '休息日值班日期', '总天数']];
+            this.staff.forEach(s => {
+                const st = stats[s.id] || {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[], posts:new Set()};
+                const postNames = Array.from(st.posts).join('、') || '-';
+                const workdayStr = st.workdayDates.sort().join('、') || '无';
+                const weekendStr = st.weekendDates.sort().join('、') || '无';
+                summaryData.push([s.name, postNames, workdayStr, weekendStr, st.total]);
+            });
+            const ws2 = XLSX.utils.aoa_to_sheet(summaryData);
+            ws2['!cols'] = [{wch:10},{wch:20},{wch:50},{wch:50},{wch:10}];
+            XLSX.utils.book_append_sheet(wb, ws2, `${currentMonth}月日期`);
+
+            currentMonth++;
+            if (currentMonth > 12) {
+                currentMonth = 1;
+                currentYear++;
+            }
+        }
+
+        XLSX.writeFile(wb, `值班统计_${fromYear}年${fromMonth}月~${toYear}年${toMonth}月.xlsx`);
+    }
+
+    exportBackup() {
+        const backup = {version: 3, exportDate: new Date().toISOString(), posts: this.posts, staff: this.staff, schedule: this.schedule, swaps: this.swaps};
+        const blob = new Blob([JSON.stringify(backup, null, 2)], {type: 'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `值班表备份_${new Date().toLocaleDateString()}.json`;
+        a.click();
+        alert('备份已下载！');
+    }
+}
+
+const app = new DutyApp();
+</script>
+</body>
+</html>

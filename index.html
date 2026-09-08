@@ -82,6 +82,7 @@
         @media print { .no-print { display: none !important; } body { background: white; } .calendar-day { break-inside: avoid; } }
     </style>
 <base target="_blank">
+<base target="_blank">
 </head>
 <body class="bg-slate-50 min-h-screen">
 
@@ -1613,7 +1614,7 @@ class DutyApp {
         this.importWorkbook = null;
     }
 
-    confirmImport() {
+confirmImport() {
         if (!this.importWorkbook) return;
 
         // 获取用户选中的Sheet
@@ -1628,7 +1629,7 @@ class DutyApp {
         const getOrCreateStaff = (name, defaultPostId) => {
             if (!name) return null;
             name = String(name).replace(/\s+/g, '').trim();
-            if (!name || name === '-' || name === '无' || name === 'NaN') return null;
+            if (!name || name === '-' || name === '无' || name === 'NaN' || name === '/') return null;
             if (nameToId[name]) return nameToId[name];
             const id = Date.now() + Math.floor(Math.random() * 100000);
             this.staff.push({id, name, postId: defaultPostId, contact: ''});
@@ -1636,90 +1637,101 @@ class DutyApp {
             return id;
         };
 
-        const postMap = {};
-        this.posts.forEach(p => {
-            postMap[p.name] = p.id;
-            if (p.name === '短期主班') { postMap['短期岗'] = p.id; postMap['短期'] = p.id; }
-            if (p.name === '短临主班') { postMap['短临岗'] = p.id; postMap['短临'] = p.id; }
-        });
+        // 岗位别名映射 + 找不到时自动创建岗位
+        const postAlias = {
+            '短期岗': '短期主班', '短期': '短期主班',
+            '短临岗': '短临主班', '短临': '短临主班'
+        };
+        const postColors = ['bg-amber-100 text-amber-800 border-amber-200','bg-sky-100 text-sky-800 border-sky-200','bg-emerald-100 text-emerald-800 border-emerald-200','bg-violet-100 text-violet-800 border-violet-200','bg-rose-100 text-rose-800 border-rose-200','bg-orange-100 text-orange-800 border-orange-200','bg-cyan-100 text-cyan-800 border-cyan-200','bg-pink-100 text-pink-800 border-pink-200'];
+        const ignoreCols = ['产品', '星期', '日期', '时间', '备注', '星期几'];
+        const getOrCreatePost = (rawName) => {
+            if (!rawName) return null;
+            let name = String(rawName).replace(/\s+/g, '').trim();
+            if (!name) return null;
+            if (ignoreCols.includes(name)) return null;
+            if (/(一|二|三|四|五|六|七|八|九|十){1,3}月/.test(name)) return null;
+            // 岗位名必须包含岗位类关键词，防止表头行残留的人名被当成岗位
+            if (!/岗|班|领导|科长|值班|主任|台长/.test(name)) return null;
+            const target = postAlias[name] || name;
+            let p = this.posts.find(p => p.name === target);
+            if (!p) {
+                p = {id: 'post_' + Date.now() + '_' + Math.floor(Math.random() * 100000),
+                     name: target,
+                     color: postColors[this.posts.length % postColors.length]};
+                this.posts.push(p);
+            }
+            return p.id;
+        };
+
+        // 中文数字月份转换
+        const cnMonths = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'十一':11,'十二':12};
+        const baseYear = 2026;
 
         let count = 0;
-        const year = 2026;
+        const skipped = [];
 
         selectedSheets.forEach(sheetName => {
             const ws = this.importWorkbook.Sheets[sheetName];
             const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
             if (json.length < 2) return;
 
+            // 从sheet名提取基准月份（如 "9月"、"5月（5.15汛期）"）
             let sheetMonth = null;
-            const m = sheetName.match(/(\d{1,2})\s*月/);
-            if (m) sheetMonth = parseInt(m[1]);
+            const sm = sheetName.match(/(\d{1,2})\s*月/);
+            if (sm) sheetMonth = parseInt(sm[1]);
 
-            let headerRow = -1;
-            let colMap = {};
+            let currentMonth = null;
+            let currentYear = baseYear;
+            let colMap = null; // {列号: postId}
 
-            for (let r = 0; r < Math.min(8, json.length); r++) {
+            for (let r = 0; r < json.length; r++) {
                 const row = json[r];
-                let hasDate = false, mapped = 0;
-                row.forEach((cell, c) => {
-                    const val = String(cell).trim();
-                    if (/日期|时间|date|日/i.test(val)) { colMap[c] = 'date'; hasDate = true; }
-                    else if (postMap[val]) { colMap[c] = {postId: postMap[val], type: 'normal'}; mapped++; }
-                    else if (val.includes('正常') && val.includes('短期')) { colMap[c] = {postId: postMap['短期主班'], type: 'normal'}; mapped++; }
-                    else if (val.includes('正常') && val.includes('短临')) { colMap[c] = {postId: postMap['短临主班'], type: 'normal'}; mapped++; }
-                    else if (val.includes('休息') && val.includes('短期')) { colMap[c] = {postId: postMap['短期主班'], type: 'rest'}; mapped++; }
-                    else if (val.includes('休息') && val.includes('短临')) { colMap[c] = {postId: postMap['短临主班'], type: 'rest'}; mapped++; }
-                    else if (val.includes('大夜班') && val.includes('正常')) { colMap[c] = {postId: postMap['短期主班'] || 'short', type: 'normal'}; mapped++; }
-                    else if (val.includes('大夜班') && val.includes('休息')) { colMap[c] = {postId: postMap['短期主班'] || 'short', type: 'rest'}; mapped++; }
-                    else if (val.includes('小夜班') && val.includes('正常')) { colMap[c] = {postId: postMap['短临主班'] || 'temp', type: 'normal'}; mapped++; }
-                    else if (val.includes('小夜班') && val.includes('休息')) { colMap[c] = {postId: postMap['短临主班'] || 'temp', type: 'rest'}; mapped++; }
-                });
-                if ((hasDate && mapped > 0) || mapped >= 2) { headerRow = r; break; }
-            }
+                const first = String(row[0] || '').replace(/\s+/g, '').trim();
+                if (!first) continue;
 
-            if (headerRow === -1) return;
-
-            let currentPerson = null;
-            let currentMonth = sheetMonth || 7;
-
-            for (let r = headerRow + 1; r < json.length; r++) {
-                const row = json[r];
-                const rowStr = row.join('');
-                const monthMatch = rowStr.match(/(\d{1,2})\s*月/);
-                if (monthMatch && !rowStr.includes('日') && rowStr.length < 20) {
-                    currentMonth = parseInt(monthMatch[1]);
+                // 月份表头行：如 "九月"、"十二月"（该行同时是岗位表头）
+                const mm = first.match(/^([一二三四五六七八九]{1,2}十?[一二]?|十[一二]?)月$/);
+                if (mm && cnMonths[mm[1]]) {
+                    const newMonth = cnMonths[mm[1]];
+                    if (currentMonth === null) {
+                        // sheet起始月份若大于sheet名月份，说明是上一年（如"1月"sheet从十二月开始）
+                        currentYear = (sheetMonth && newMonth > sheetMonth) ? baseYear - 1 : baseYear;
+                    } else if (newMonth < currentMonth) {
+                        currentYear += 1; // 月份回跳说明跨年
+                    }
+                    currentMonth = newMonth;
+                    // 重建列映射（本行即岗位表头，列顺序可能变化）
+                    colMap = {};
+                    row.forEach((cell, c) => {
+                        if (c === 0) return;
+                        const pid = getOrCreatePost(cell);
+                        if (pid) colMap[c] = pid;
+                    });
                     continue;
                 }
 
-                if (row[0] && String(row[0]).trim() && !String(row[0]).includes('合计') && !String(row[0]).includes('签字') && !String(row[0]).includes('备注')) {
-                    currentPerson = String(row[0]).trim();
-                }
+                // 兼容旧格式表头行（含"日期"等字样时跳过）
+                if (/日期|时间/.test(first)) continue;
 
-                if (!currentPerson) continue;
+                // 数据行：第一列是日期，如 "1日"、"23日（初七）"
+                const dm = first.match(/^(\d{1,2})\s*日?/);
+                if (!dm || !currentMonth || !colMap) continue;
+                const day = parseInt(dm[1]);
 
-                let dateVal = null;
-                for (let c = 0; c < row.length; c++) {
-                    if (colMap[c] === 'date') {
-                        dateVal = String(row[c]).trim().replace('日', '');
-                        break;
-                    }
-                }
-                if (!dateVal || isNaN(parseInt(dateVal))) continue;
+                // 校验日期有效性
+                const d = new Date(currentYear, currentMonth - 1, day);
+                if (d.getMonth() !== currentMonth - 1) { skipped.push(`${sheetName}第${r+1}行：${currentMonth}月${day}日无效`); continue; }
 
-                const day = parseInt(dateVal);
-                const ds = `${year}-${String(currentMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                const ds = `${currentYear}-${String(currentMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 if (!this.schedule[ds]) this.schedule[ds] = [];
 
                 Object.keys(colMap).forEach(c => {
-                    const colInfo = colMap[c];
-                    if (colInfo === 'date') return;
+                    const postId = colMap[c];
                     const name = String(row[c] || '').trim();
-                    if (!name || name === '-' || name === '无' || name === 'NaN') return;
-
-                    const staffName = (row[0] && String(row[0]).trim() && !String(row[0]).includes('合计')) ? String(row[0]).trim() : currentPerson;
-                    const sid = getOrCreateStaff(staffName, colInfo.postId);
-                    if (sid && !this.schedule[ds].find(s => s.staffId === sid && s.postId === colInfo.postId)) {
-                        this.schedule[ds].push({staffId: sid, postId: colInfo.postId, shiftType: colInfo.type});
+                    if (!name || name === '-' || name === '无' || name === 'NaN' || name === '/') return;
+                    const sid = getOrCreateStaff(name, postId);
+                    if (sid && !this.schedule[ds].find(s => s.staffId === sid && s.postId === postId)) {
+                        this.schedule[ds].push({staffId: sid, postId: postId, shiftType: 'normal'});
                         count++;
                     }
                 });
@@ -1730,7 +1742,9 @@ class DutyApp {
         this.renderStaffList();
         this.renderCalendar();
         this.cancelImport();
-        alert(`导入完成！新增/更新 ${count} 条排班记录。`);
+        let msg = `导入完成！新增/更新 ${count} 条排班记录。`;
+        if (skipped.length) msg += `\n跳过 ${skipped.length} 条无效数据。`;
+        alert(msg);
         this.switchTab('calendar');
     }
 

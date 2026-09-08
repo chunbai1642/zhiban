@@ -24,7 +24,7 @@
         .calendar-day:hover { transform: translateY(-2px); box-shadow: 0 8px 25px -5px rgba(0,0,0,0.1); }
         .calendar-day.weekend { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); }
         .calendar-day.weekday { background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); }
-        .calendar-day.today { ring: 2px solid #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,0.1); }
+        .calendar-day.today { box-shadow: 0 0 0 2px #3b82f6, 0 0 0 4px rgba(59,130,246,0.1); }
         .shift-badge {
             font-size: 13px; padding: 4px 8px; border-radius: 8px; margin-bottom: 4px;
             display: flex; align-items: center; justify-content: space-between;
@@ -32,7 +32,6 @@
         }
         .shift-badge:hover { transform: scale(1.02); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 
-        /* 岗位颜色 */
         .badge-short { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #92400e; border: 1px solid #fcd34d; }
         .badge-temp { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #1e40af; border: 1px solid #93c5fd; }
         .badge-service { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); color: #065f46; border: 1px solid #6ee7b7; }
@@ -60,8 +59,18 @@
         .loading-spinner { width: 48px; height: 48px; border: 4px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
         @media print { .no-print { display: none !important; } body { background: white; } .calendar-day { break-inside: avoid; } }
+
+        @media (max-width: 1024px) {
+            aside { transform: translateX(-100%); transition: transform 0.3s ease; z-index: 50; }
+            aside.open { transform: translateX(0); }
+            main { margin-left: 0 !important; }
+            .mobile-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 45; }
+            .mobile-overlay.active { display: block; }
+            .calendar-grid { gap: 4px; }
+            .calendar-day { min-height: 90px; padding: 6px; }
+            .shift-badge { font-size: 11px; padding: 2px 4px; }
+        }
     </style>
-<base target="_blank">
 </head>
 <body class="bg-slate-50 min-h-screen">
 
@@ -73,15 +82,18 @@
     </div>
 </div>
 
-<!-- Supabase 配置提示（首次使用显示） -->
-<div id="config-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
-    <div class="modal-content bg-white rounded-2xl p-8 w-[500px] shadow-2xl">
+<!-- 移动端遮罩 -->
+<div id="mobile-overlay" class="mobile-overlay" onclick="app.toggleSidebar()"></div>
+
+<!-- 数据库连接设置（仅失败或手动更换时显示） -->
+<div id="config-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center p-4">
+    <div class="modal-content bg-white rounded-2xl p-6 md:p-8 w-full max-w-[500px] shadow-2xl">
         <div class="text-center mb-6">
             <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
                 <i class="fas fa-cloud text-2xl text-white"></i>
             </div>
-            <h3 class="text-xl font-bold text-slate-800">连接 Supabase 数据库</h3>
-            <p class="text-sm text-slate-400 mt-2">首次使用需要配置云数据库连接信息</p>
+            <h3 class="text-xl font-bold text-slate-800">数据库连接设置</h3>
+            <p class="text-sm text-slate-400 mt-2">当前已内置默认数据库，如需更换可在此修改</p>
         </div>
         <div class="space-y-4">
             <div>
@@ -98,13 +110,16 @@
                 <p>2. 进入 Project Settings → API</p>
                 <p>3. 复制 URL 和 anon public 密钥</p>
             </div>
-            <button onclick="app.saveSupabaseConfig()" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">保存并连接</button>
+            <div class="flex space-x-3">
+                <button onclick="app.saveSupabaseConfig()" class="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">保存并连接</button>
+                <button onclick="app.useLocalOnly()" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl font-medium hover:bg-slate-200 transition">仅使用本地</button>
+            </div>
         </div>
     </div>
 </div>
 
-<aside class="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white z-40 no-print flex flex-col">
-    <div class="p-6 border-b border-slate-700">
+<aside id="sidebar" class="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white z-40 no-print flex flex-col">
+    <div class="p-6 border-b border-slate-700 flex items-center justify-between">
         <div class="flex items-center space-x-3">
             <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg">
                 <i class="fas fa-cloud-sun text-lg"></i>
@@ -114,8 +129,11 @@
                 <p class="text-xs text-slate-400">智能管理系统</p>
             </div>
         </div>
+        <button onclick="app.toggleSidebar()" class="lg:hidden text-slate-400 hover:text-white">
+            <i class="fas fa-times"></i>
+        </button>
     </div>
-    <nav class="flex-1 p-4 space-y-1">
+    <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
         <button onclick="app.switchTab('calendar')" id="nav-calendar" class="nav-item active w-full flex items-center space-x-3 px-4 py-3 text-sm">
             <i class="fas fa-calendar-alt w-5"></i><span>日历排班</span>
         </button>
@@ -141,42 +159,48 @@
             <p class="text-lg font-bold" id="sidebar-month">2026年7月</p>
             <div class="flex items-center mt-2 text-xs text-slate-400">
                 <span class="w-2 h-2 rounded-full bg-green-400 mr-2" id="db-status-dot"></span>
-                <span id="db-status">云数据库</span>
+                <span id="db-status">本地存储</span>
             </div>
-            <button onclick="app.syncFromCloud()" class="mt-2 text-xs text-blue-400 hover:text-blue-300 underline">手动同步云端</button>
+            <div class="mt-2 flex space-x-2">
+                <button onclick="app.syncFromCloud()" class="text-xs text-blue-400 hover:text-blue-300 underline">手动同步云端</button>
+                <button onclick="app.showConfigModal()" class="text-xs text-slate-500 hover:text-slate-300 underline">更换数据库</button>
+            </div>
         </div>
     </div>
 </aside>
 
-<main class="ml-64 min-h-screen">
+<main class="ml-64 min-h-screen transition-all duration-300">
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 no-print">
-        <div class="flex justify-between items-center px-8 py-4">
+        <div class="flex justify-between items-center px-4 md:px-8 py-4">
             <div class="flex items-center space-x-4">
+                <button onclick="app.toggleSidebar()" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 text-slate-600">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <h2 class="text-xl font-bold text-slate-800" id="page-title">日历排班</h2>
                 <span class="px-3 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-600 border border-blue-100" id="page-badge">本月</span>
             </div>
-            <div class="flex items-center space-x-3">
-                <button onclick="app.undo()" id="btn-undo" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition" disabled>
-                    <i class="fas fa-undo mr-1"></i>撤销
+            <div class="flex items-center space-x-2 md:space-x-3">
+                <button onclick="app.undo()" id="btn-undo" class="px-3 md:px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition" disabled>
+                    <i class="fas fa-undo mr-1"></i><span class="hidden md:inline">撤销</span>
                 </button>
-                <button onclick="app.redo()" id="btn-redo" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition" disabled>
-                    <i class="fas fa-redo mr-1"></i>重做
+                <button onclick="app.redo()" id="btn-redo" class="px-3 md:px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition" disabled>
+                    <i class="fas fa-redo mr-1"></i><span class="hidden md:inline">重做</span>
                 </button>
-                <button onclick="window.print()" class="px-4 py-2 rounded-lg text-sm font-medium bg-slate-800 text-white hover:bg-slate-700 transition shadow-sm">
-                    <i class="fas fa-print mr-1"></i>打印
+                <button onclick="window.print()" class="px-3 md:px-4 py-2 rounded-lg text-sm font-medium bg-slate-800 text-white hover:bg-slate-700 transition shadow-sm">
+                    <i class="fas fa-print mr-1"></i><span class="hidden md:inline">打印</span>
                 </button>
             </div>
         </div>
     </header>
 
-    <div class="p-8">
+    <div class="p-4 md:p-8">
         <!-- 日历视图 -->
         <div id="tab-calendar" class="tab-content">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
                 <div class="stat-card bg-gradient-to-br from-blue-500 to-blue-600 text-white">
                     <div class="relative z-10">
                         <p class="text-blue-100 text-sm mb-1">本月总人次</p>
-                        <p class="text-3xl font-bold animate-count" id="stat-total">0</p>
+                        <p class="text-2xl md:text-3xl font-bold animate-count" id="stat-total">0</p>
                         <div class="mt-3 flex items-center text-xs text-blue-100"><span>含工作日与休息日</span></div>
                     </div>
                     <i class="fas fa-users absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
@@ -184,7 +208,7 @@
                 <div class="stat-card bg-gradient-to-br from-emerald-500 to-emerald-600 text-white">
                     <div class="relative z-10">
                         <p class="text-emerald-100 text-sm mb-1">工作日值班</p>
-                        <p class="text-3xl font-bold animate-count" id="stat-workday">0</p>
+                        <p class="text-2xl md:text-3xl font-bold animate-count" id="stat-workday">0</p>
                         <div class="mt-3 text-xs text-emerald-100"><span>周一至周五普通值班</span></div>
                     </div>
                     <i class="fas fa-briefcase absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
@@ -192,7 +216,7 @@
                 <div class="stat-card bg-gradient-to-br from-amber-500 to-amber-600 text-white">
                     <div class="relative z-10">
                         <p class="text-amber-100 text-sm mb-1">休息日值班</p>
-                        <p class="text-3xl font-bold animate-count" id="stat-weekend">0</p>
+                        <p class="text-2xl md:text-3xl font-bold animate-count" id="stat-weekend">0</p>
                         <div class="mt-3 text-xs text-amber-100"><span>周六周日休息值班</span></div>
                     </div>
                     <i class="fas fa-coffee absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
@@ -200,48 +224,48 @@
                 <div class="stat-card bg-gradient-to-br from-violet-500 to-violet-600 text-white">
                     <div class="relative z-10">
                         <p class="text-violet-100 text-sm mb-1">值班人员</p>
-                        <p class="text-3xl font-bold animate-count" id="stat-staff">0</p>
+                        <p class="text-2xl md:text-3xl font-bold animate-count" id="stat-staff">0</p>
                         <div class="mt-3 text-xs text-violet-100"><span>已录入系统</span></div>
                     </div>
                     <i class="fas fa-user-check absolute bottom-4 right-4 text-6xl text-white opacity-10"></i>
                 </div>
             </div>
 
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-                <div class="flex justify-between items-center">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 md:p-6 mb-6">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div class="flex items-center space-x-4">
                         <button onclick="app.changeMonth(-1)" class="w-10 h-10 rounded-xl bg-slate-50 hover:bg-slate-100 flex items-center justify-center transition">
                             <i class="fas fa-chevron-left text-slate-600"></i>
                         </button>
                         <div>
-                            <h3 class="text-2xl font-bold text-slate-800" id="current-month">2026年7月</h3>
+                            <h3 class="text-xl md:text-2xl font-bold text-slate-800" id="current-month">2026年7月</h3>
                             <p class="text-sm text-slate-400" id="current-month-info">本月共31天，8天为休息日</p>
                         </div>
                         <button onclick="app.changeMonth(1)" class="w-10 h-10 rounded-xl bg-slate-50 hover:bg-slate-100 flex items-center justify-center transition">
                             <i class="fas fa-chevron-right text-slate-600"></i>
                         </button>
                     </div>
-                    <div class="flex items-center space-x-3 no-print">
-                        <input type="month" id="jump-month-input" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
-                        <button onclick="app.jumpToMonth()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 transition">跳转</button>
-                        <button onclick="app.openGenerateModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm hover:bg-indigo-700 transition">
+                    <div class="flex items-center space-x-3 no-print w-full md:w-auto">
+                        <input type="month" id="jump-month-input" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 md:flex-none">
+                        <button onclick="app.jumpToMonth()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 transition whitespace-nowrap">跳转</button>
+                        <button onclick="app.openGenerateModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm hover:bg-indigo-700 transition whitespace-nowrap">
                             <i class="fas fa-magic mr-1"></i>自动排班
                         </button>
                     </div>
                 </div>
             </div>
 
-            <div class="flex flex-wrap gap-4 mb-4 text-sm no-print" id="legend-area"></div>
+            <div class="flex flex-wrap gap-2 md:gap-4 mb-4 text-xs md:text-sm no-print" id="legend-area"></div>
 
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <div class="grid grid-cols-7 gap-2 mb-3 text-center">
-                    <div class="py-2 font-semibold text-slate-400 text-sm">周日</div>
-                    <div class="py-2 font-semibold text-slate-400 text-sm">周一</div>
-                    <div class="py-2 font-semibold text-slate-400 text-sm">周二</div>
-                    <div class="py-2 font-semibold text-slate-400 text-sm">周三</div>
-                    <div class="py-2 font-semibold text-slate-400 text-sm">周四</div>
-                    <div class="py-2 font-semibold text-slate-400 text-sm">周五</div>
-                    <div class="py-2 font-semibold text-slate-400 text-sm">周六</div>
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 md:p-6">
+                <div class="grid grid-cols-7 gap-1 md:gap-2 mb-3 text-center">
+                    <div class="py-2 font-semibold text-slate-400 text-xs md:text-sm">周日</div>
+                    <div class="py-2 font-semibold text-slate-400 text-xs md:text-sm">周一</div>
+                    <div class="py-2 font-semibold text-slate-400 text-xs md:text-sm">周二</div>
+                    <div class="py-2 font-semibold text-slate-400 text-xs md:text-sm">周三</div>
+                    <div class="py-2 font-semibold text-slate-400 text-xs md:text-sm">周四</div>
+                    <div class="py-2 font-semibold text-slate-400 text-xs md:text-sm">周五</div>
+                    <div class="py-2 font-semibold text-slate-400 text-xs md:text-sm">周六</div>
                 </div>
                 <div id="calendar-grid" class="calendar-grid"></div>
             </div>
@@ -315,7 +339,7 @@
         <!-- 导入视图 -->
         <div id="tab-import" class="tab-content hidden">
             <div class="max-w-3xl mx-auto">
-                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-8">
                     <div class="text-center mb-8">
                         <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
                             <i class="fas fa-file-import text-2xl text-white"></i>
@@ -335,14 +359,18 @@
                             <span class="text-xs text-slate-400" id="import-file-name"></span>
                         </div>
                         <div id="sheet-checkboxes" class="flex flex-wrap gap-3 mb-4"></div>
-                        <div class="border rounded-xl max-h-64 overflow-x-auto">
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-slate-600 mb-1">年份（用于日期解析）</label>
+                            <input type="number" id="import-year" value="2026" class="w-full md:w-auto border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                        </div>
+                        <div class="border rounded-xl max-h-64 overflow-x-auto mt-4">
                             <p class="text-xs text-slate-500 px-3 py-2 bg-slate-50 border-b">预览（点击Sheet名称切换预览）：</p>
                             <table class="min-w-full text-xs" id="preview-table">
                                 <thead class="bg-slate-50 sticky top-0"></thead>
                                 <tbody></tbody>
                             </table>
                         </div>
-                        <div class="flex space-x-3 mt-4">
+                        <div class="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-3 mt-4">
                             <button onclick="app.confirmImport()" class="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-medium hover:bg-indigo-700 transition">确认导入</button>
                             <button onclick="app.cancelImport()" class="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-medium hover:bg-slate-200 transition">取消</button>
                         </div>
@@ -364,15 +392,15 @@
         <div id="tab-export" class="tab-content hidden">
             <div class="max-w-4xl mx-auto">
                 <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-                    <div class="flex items-center justify-between mb-4">
+                    <div class="flex flex-col md:flex-row items-start md:items-center justify-between mb-4 gap-4">
                         <div>
                             <h3 class="text-lg font-bold text-slate-800">选择导出月份</h3>
                             <p class="text-sm text-slate-400 mt-1">可选择单个月份或多个月份批量导出</p>
                         </div>
-                        <div class="flex items-center space-x-3">
-                            <input type="month" id="export-month-from" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value="2026-07">
+                        <div class="flex items-center space-x-3 w-full md:w-auto">
+                            <input type="month" id="export-month-from" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 md:flex-none" value="2026-07">
                             <span class="text-slate-400">至</span>
-                            <input type="month" id="export-month-to" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value="2026-07">
+                            <input type="month" id="export-month-to" class="border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-1 md:flex-none" value="2026-07">
                         </div>
                     </div>
                     <div class="border-t border-slate-100 pt-4">
@@ -381,7 +409,7 @@
                     </div>
                 </div>
 
-                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-8">
                     <div class="text-center mb-8">
                         <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
                             <i class="fas fa-file-excel text-2xl text-white"></i>
@@ -392,41 +420,53 @@
                     <div class="space-y-4">
                         <div class="border rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="app.exportToExcel()">
                             <div class="flex items-center">
-                                <div class="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center mr-4">
+                                <div class="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center mr-4 shrink-0">
                                     <i class="fas fa-table text-green-600 text-xl"></i>
                                 </div>
-                                <div class="flex-1">
+                                <div class="flex-1 min-w-0">
                                     <h4 class="font-medium text-slate-800">导出月度值班表</h4>
                                     <p class="text-xs text-slate-400">包含日历排班、人员信息</p>
                                 </div>
-                                <span class="text-xs text-slate-400 mr-3" id="export-label-1">2026年7月</span>
-                                <i class="fas fa-chevron-right text-slate-300"></i>
+                                <span class="text-xs text-slate-400 mr-3 shrink-0" id="export-label-1">2026年7月</span>
+                                <i class="fas fa-chevron-right text-slate-300 shrink-0"></i>
                             </div>
                         </div>
                         <div class="border rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="app.exportStatsToExcel()">
                             <div class="flex items-center">
-                                <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mr-4">
+                                <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mr-4 shrink-0">
                                     <i class="fas fa-chart-bar text-blue-600 text-xl"></i>
                                 </div>
-                                <div class="flex-1">
+                                <div class="flex-1 min-w-0">
                                     <h4 class="font-medium text-slate-800">导出统计报表（含明细）</h4>
                                     <p class="text-xs text-slate-400">包含每个人具体值班日期、工作日/休息日天数统计</p>
                                 </div>
-                                <span class="text-xs text-slate-400 mr-3" id="export-label-2">2026年7月</span>
-                                <i class="fas fa-chevron-right text-slate-300"></i>
+                                <span class="text-xs text-slate-400 mr-3 shrink-0" id="export-label-2">2026年7月</span>
+                                <i class="fas fa-chevron-right text-slate-300 shrink-0"></i>
                             </div>
                         </div>
                         <div class="border rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="app.exportMultiMonth()">
                             <div class="flex items-center">
-                                <div class="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center mr-4">
+                                <div class="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center mr-4 shrink-0">
                                     <i class="fas fa-layer-group text-indigo-600 text-xl"></i>
                                 </div>
-                                <div class="flex-1">
+                                <div class="flex-1 min-w-0">
                                     <h4 class="font-medium text-slate-800">批量导出多个月份</h4>
                                     <p class="text-xs text-slate-400">将所选月份范围合并导出到一个 Excel 文件</p>
                                 </div>
-                                <span class="text-xs text-slate-400 mr-3" id="export-label-3">2026年7月</span>
-                                <i class="fas fa-chevron-right text-slate-300"></i>
+                                <span class="text-xs text-slate-400 mr-3 shrink-0" id="export-label-3">2026年7月</span>
+                                <i class="fas fa-chevron-right text-slate-300 shrink-0"></i>
+                            </div>
+                        </div>
+                        <div class="border rounded-xl p-4 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer" onclick="app.exportBackup()">
+                            <div class="flex items-center">
+                                <div class="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mr-4 shrink-0">
+                                    <i class="fas fa-database text-slate-600 text-xl"></i>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <h4 class="font-medium text-slate-800">导出 JSON 备份</h4>
+                                    <p class="text-xs text-slate-400">导出完整数据备份文件，可用于迁移或灾难恢复</p>
+                                </div>
+                                <i class="fas fa-chevron-right text-slate-300 shrink-0"></i>
                             </div>
                         </div>
                     </div>
@@ -437,8 +477,8 @@
 </main>
 
 <!-- 人员模态框 -->
-<div id="staff-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
-    <div class="modal-content bg-white rounded-2xl p-6 w-96 shadow-2xl">
+<div id="staff-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center p-4">
+    <div class="modal-content bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
         <h3 class="font-bold text-lg mb-4 text-slate-800">添加值班人员</h3>
         <div class="space-y-4">
             <div>
@@ -454,7 +494,7 @@
                 <input id="staff-contact" placeholder="手机号/短号（可选）" class="w-full border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition">
             </div>
             <div class="flex space-x-3 pt-2">
-                <button onclick="app.saveStaff()" class="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">保存</button>
+                <button onclick="app.saveNewStaff()" class="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition">保存</button>
                 <button onclick="app.closeModal('staff-modal')" class="flex-1 bg-slate-100 text-slate-600 py-2.5 rounded-xl font-medium hover:bg-slate-200 transition">取消</button>
             </div>
         </div>
@@ -462,8 +502,8 @@
 </div>
 
 <!-- 日期详情模态框 -->
-<div id="day-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
-    <div class="modal-content bg-white rounded-2xl p-6 w-[520px] max-h-[85vh] overflow-y-auto shadow-2xl">
+<div id="day-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center p-4">
+    <div class="modal-content bg-white rounded-2xl p-6 w-full max-w-[520px] max-h-[85vh] overflow-y-auto shadow-2xl">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-bold text-lg text-slate-800" id="day-title">班次详情</h3>
             <span id="day-type-badge" class="px-3 py-1 rounded-full text-xs font-medium"></span>
@@ -476,7 +516,7 @@
                     <select id="day-staff" class="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></select>
                     <select id="day-post" class="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></select>
                 </div>
-                <div class="flex space-x-4 text-sm">
+                <div class="flex flex-col md:flex-row md:space-x-4 space-y-2 md:space-y-0 text-sm">
                     <label class="flex items-center space-x-2 cursor-pointer">
                         <input type="radio" name="day-shift-type" value="normal" checked class="text-blue-600">
                         <span class="text-slate-600">工作日值班（正常）</span>
@@ -498,8 +538,8 @@
 </div>
 
 <!-- 自动排班模态框 -->
-<div id="generate-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
-    <div class="modal-content bg-white rounded-2xl p-6 w-[480px] shadow-2xl">
+<div id="generate-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center p-4">
+    <div class="modal-content bg-white rounded-2xl p-6 w-full max-w-[480px] shadow-2xl">
         <h3 class="font-bold text-lg mb-4 text-slate-800">自动生成排班</h3>
         <div class="space-y-4 text-sm">
             <div>
@@ -527,23 +567,22 @@
 
 <script>
 
-// ==================== Supabase 配置（已内置）====================
-// 配置已硬编码，换电脑无需重新输入
-// 如需修改数据库，请更改下面的 URL 和 KEY
+// ==================== Supabase 配置（已硬编码，开箱即用）====================
 const SUPABASE_URL = 'https://phhfygjpefmrmqhlvupx.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoaGZ5Z2pwZWZtcm1xaGx2dXB4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NjYyNTMsImV4cCI6MjEwNDM0MjI1M30.fqUo3l7BU3pEZLK6Mnxbiyi9BtykoU9GmvaWHekK87w';
 
 let supabase = null;
+let USE_CLOUD = false;
+
 try {
-    if (window.supabase) {
+    if (window.supabase && SUPABASE_URL && SUPABASE_KEY) {
         supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-        console.log('Supabase 已连接');
+        USE_CLOUD = true;
+        console.log('Supabase 自动连接成功');
     }
 } catch (err) {
     console.error('Supabase 初始化失败:', err);
 }
-
-const USE_CLOUD = !!supabase;
 
 class DutyApp {
     constructor() {
@@ -559,6 +598,7 @@ class DutyApp {
         this.selectedDate = null;
         this.currentTab = 'calendar';
         this.isLoading = false;
+        this.hasPushedInitialHistory = false;
 
         // 默认岗位
         this.defaultPosts = [
@@ -572,6 +612,18 @@ class DutyApp {
             {id:'emergency', name:'应急值班'},
             {id:'radar', name:'雷达班'},
             {id:'team', name:'领班岗'}
+        ];
+
+        // 动态颜色池（用于新增岗位）
+        this.dynamicColors = [
+            'from-slate-100 to-slate-200 text-slate-700 border-slate-300',
+            'from-orange-100 to-orange-200 text-orange-700 border-orange-300',
+            'from-teal-100 to-teal-200 text-teal-700 border-teal-300',
+            'from-cyan-100 to-cyan-200 text-cyan-700 border-cyan-300',
+            'from-lime-100 to-lime-200 text-lime-700 border-lime-300',
+            'from-rose-100 to-rose-200 text-rose-700 border-rose-300',
+            'from-sky-100 to-sky-200 text-sky-700 border-sky-300',
+            'from-indigo-100 to-indigo-200 text-indigo-700 border-indigo-300',
         ];
 
         // 如果没有数据，加载演示数据
@@ -592,20 +644,20 @@ class DutyApp {
         this.renderCalendar();
         this.updateStats();
         this.updateSidebar();
+        this.setupExportListeners();
         document.getElementById('gen-month').value = '2026-07';
         document.getElementById('jump-month-input').value = '2026-07';
         document.getElementById('export-month-from').value = '2026-07';
         document.getElementById('export-month-to').value = '2026-07';
-        this.setupExportListeners();
-        this.pushHistory('初始状态');
 
-        // 自动同步云端数据
+        // 自动同步云端数据（已内置配置，无需手动输入）
         if (supabase) {
             try {
                 await this.loadAllData();
                 this.renderPosts();
                 this.renderCalendar();
                 this.updateStats();
+                this.renderStaffList();
                 console.log('云端数据同步成功');
             } catch (err) {
                 console.error('云端同步失败，使用本地数据:', err);
@@ -613,7 +665,16 @@ class DutyApp {
         }
     }
 
+    toggleSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('mobile-overlay');
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('active');
+    }
+
     showConfigModal() {
+        document.getElementById('sb-url').value = SUPABASE_URL;
+        document.getElementById('sb-key').value = SUPABASE_KEY;
         document.getElementById('config-modal').classList.remove('hidden');
     }
 
@@ -624,68 +685,136 @@ class DutyApp {
 
         localStorage.setItem('sb_url', url);
         localStorage.setItem('sb_key', key);
+        location.reload();
+    }
 
-        supabase = window.supabase.createClient(url, key);
+    useLocalOnly() {
+        localStorage.setItem('sb_skip_config', '1');
         document.getElementById('config-modal').classList.add('hidden');
-        this.init();
+        alert('已切换为仅本地存储模式。如需连接云端，请点击侧边栏底部的"更换数据库"。');
+    }
+
+    // ==================== 演示数据 ====================
+    loadDemoData() {
+        this.posts = JSON.parse(JSON.stringify(this.defaultPosts));
+        
+        const demoStaff = [
+            {id: 1001, name: '张三', postId: 'short', contact: '13800138001'},
+            {id: 1002, name: '李四', postId: 'temp', contact: '13800138002'},
+            {id: 1003, name: '王五', postId: 'service', contact: '13800138003'},
+            {id: 1004, name: '赵六', postId: 'chief', contact: '13800138004'},
+            {id: 1005, name: '孙七', postId: 'lead', contact: '13800138005'},
+            {id: 1006, name: '周八', postId: 'short', contact: '13800138006'},
+            {id: 1007, name: '吴九', postId: 'temp', contact: '13800138007'},
+        ];
+        this.staff = demoStaff;
+        
+        const y = 2026, m = 7;
+        const days = this.getMonthDays(y, m);
+        this.schedule = {};
+        
+        const postIds = ['short', 'temp', 'service', 'chief', 'lead'];
+        postIds.forEach((pid, pIdx) => {
+            const pool = this.staff.filter(s => s.postId === pid);
+            if (pool.length === 0) return;
+            let idx = 0;
+            for (let d = 1; d <= days; d++) {
+                const ds = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                const isWeekend = this.isWeekend(ds);
+                if (!this.schedule[ds]) this.schedule[ds] = [];
+                const person = pool[idx % pool.length];
+                this.schedule[ds].push({
+                    staffId: person.id,
+                    postId: pid,
+                    shiftType: isWeekend ? 'rest' : 'normal'
+                });
+                idx++;
+            }
+        });
+        
+        localStorage.setItem('duty_posts', JSON.stringify(this.posts));
+        localStorage.setItem('duty_staff', JSON.stringify(this.staff));
+        localStorage.setItem('duty_schedule', JSON.stringify(this.schedule));
     }
 
     // ==================== 数据加载（Supabase）====================
     async loadAllData() {
         this.showLoading('正在从云端加载数据...');
         try {
-            // 加载岗位
             const { data: postsData, error: postsError } = await supabase.from('posts').select('*').order('id');
-            if (postsError) {
-                console.error('岗位加载错误:', postsError);
-                throw new Error('岗位表访问失败: ' + postsError.message);
-            }
-            this.posts = postsData && postsData.length > 0 ? postsData : [...this.defaultPosts];
-
-            // 如果数据库没有岗位，初始化默认岗位
-            if (!postsData || postsData.length === 0) {
+            if (postsError) throw new Error('岗位表访问失败: ' + postsError.message);
+            
+            if (postsData && postsData.length > 0) {
+                this.posts = postsData;
+            } else {
+                this.posts = [...this.defaultPosts];
                 for (const p of this.defaultPosts) {
-                    await supabase.from('posts').insert({id: p.id, name: p.name});
+                    await supabase.from('posts').upsert({id: p.id, name: p.name}, {onConflict: 'id'});
                 }
             }
 
-            // 加载人员
             const { data: staffData, error: staffError } = await supabase.from('staff').select('*').order('id');
-            if (staffError) {
-                console.error('人员加载错误:', staffError);
-                throw new Error('人员表访问失败: ' + staffError.message);
-            }
-            this.staff = staffData || [];
-
-            // 加载排班
-            const { data: scheduleData, error: scheduleError } = await supabase.from('schedules').select('*');
-            if (scheduleError) {
-                console.error('排班加载错误:', scheduleError);
-                throw new Error('排班表访问失败: ' + scheduleError.message);
-            }
-            this.schedule = {};
-            if (scheduleData) {
-                scheduleData.forEach(s => {
-                    if (!this.schedule[s.date]) this.schedule[s.date] = [];
-                    this.schedule[s.date].push({
-                        staffId: s.staff_id,
-                        postId: s.post_id,
-                        shiftType: s.shift_type
-                    });
+            if (staffError) throw new Error('人员表访问失败: ' + staffError.message);
+            
+            if (staffData && staffData.length > 0) {
+                const localStaffIds = new Set(this.staff.map(s => s.id));
+                staffData.forEach(s => {
+                    if (!localStaffIds.has(s.id)) {
+                        this.staff.push({id: s.id, name: s.name, postId: s.post_id, contact: s.contact || ''});
+                    }
                 });
             }
 
-            // 加载换班
-            const { data: swapsData, error: swapsError } = await supabase.from('swaps').select('*').order('created_at', {ascending: false});
-            if (swapsError) {
-                console.error('换班加载错误:', swapsError);
-                throw new Error('换班表访问失败: ' + swapsError.message);
+            const { data: scheduleData, error: scheduleError } = await supabase.from('schedules').select('*');
+            if (scheduleError) throw new Error('排班表访问失败: ' + scheduleError.message);
+            
+            if (scheduleData) {
+                scheduleData.forEach(s => {
+                    if (!this.schedule[s.date]) this.schedule[s.date] = [];
+                    const exists = this.schedule[s.date].find(
+                        local => local.staffId === s.staff_id && local.postId === s.post_id
+                    );
+                    if (!exists) {
+                        this.schedule[s.date].push({
+                            staffId: s.staff_id,
+                            postId: s.post_id,
+                            shiftType: s.shift_type
+                        });
+                    }
+                });
             }
-            this.swaps = swapsData || [];
+
+            const { data: swapsData, error: swapsError } = await supabase.from('swaps').select('*').order('created_at', {ascending: false});
+            if (swapsError) throw new Error('换班表访问失败: ' + swapsError.message);
+            
+            if (swapsData) {
+                const localSwapIds = new Set(this.swaps.map(s => s.id));
+                swapsData.forEach(sw => {
+                    if (!localSwapIds.has(sw.id)) {
+                        this.swaps.push({
+                            id: sw.id,
+                            fromId: sw.from_id,
+                            toId: sw.to_id,
+                            fromDate: sw.from_date,
+                            toDate: sw.to_date,
+                            fromPostId: sw.from_post_id,
+                            toPostId: sw.to_post_id,
+                            fromName: sw.from_name,
+                            toName: sw.to_name,
+                            fromPostName: sw.from_post_name,
+                            toPostName: sw.to_post_name,
+                            reason: sw.reason,
+                            status: sw.status,
+                            createdAt: sw.created_at,
+                            approvedAt: sw.approved_at
+                        });
+                    }
+                });
+            }
 
         } catch (err) {
             console.error('加载数据失败:', err);
-            alert('连接数据库失败: ' + err.message + '\n\n可能原因:\n1. Supabase URL 或 Key 错误\n2. 数据库表未创建\n3. 网络连接问题\n\n请检查配置后刷新页面。');
+            alert('连接数据库失败: ' + err.message + '\n\n已自动降级为本地存储模式。');
             throw err;
         } finally {
             this.hideLoading();
@@ -701,43 +830,33 @@ class DutyApp {
         document.getElementById('global-loading').style.display = 'none';
     }
 
-    // ==================== 数据保存（Supabase）====================
-    async savePosts() {
+    // ==================== 数据保存到云端 ====================
+    async syncStaffToCloud() {
         if (!supabase) return;
-        // 岗位一般不频繁变动，这里简化处理
-    }
-
-    async saveStaff() {
-        if (!supabase) return;
-        // 先清空再全量插入（简单可靠）
-        await supabase.from('staff').delete().neq('id', 0);
-        if (this.staff.length > 0) {
-            const records = this.staff.map(s => ({
-                id: s.id,
-                name: s.name,
-                post_id: s.postId,
-                contact: s.contact || ''
-            }));
-            const { error } = await supabase.from('staff').insert(records);
-            if (error) throw new Error('保存人员失败: ' + error.message);
+        if (this.staff.length === 0) {
+            await supabase.from('staff').delete().neq('id', 0);
+            return;
         }
+        const records = this.staff.map(s => ({
+            id: s.id,
+            name: s.name,
+            post_id: s.postId,
+            contact: s.contact || ''
+        }));
+        const { error } = await supabase.from('staff').upsert(records, { onConflict: 'id' });
+        if (error) throw new Error('同步人员失败: ' + error.message);
     }
 
-    async saveSchedule() {
+    async syncScheduleToCloud() {
         if (!supabase) return;
 
         const y = this.currentDate.getFullYear();
         const m = this.currentDate.getMonth() + 1;
         const monthPrefix = `${y}-${String(m).padStart(2,'0')}`;
 
-        // 先删除该月数据
         const { error: delError } = await supabase.from('schedules').delete().like('date', `${monthPrefix}%`);
-        if (delError) {
-            console.error('删除旧排班失败:', delError);
-            throw new Error('删除旧排班失败: ' + delError.message);
-        }
+        if (delError) throw new Error('删除旧排班失败: ' + delError.message);
 
-        // 收集要插入的数据
         const inserts = [];
         Object.keys(this.schedule).forEach(date => {
             if (date.startsWith(monthPrefix)) {
@@ -752,20 +871,14 @@ class DutyApp {
             }
         });
 
-        // 批量插入
         if (inserts.length > 0) {
-            console.log('准备插入排班:', inserts.length, '条');
             const { error: insError } = await supabase.from('schedules').insert(inserts);
-            if (insError) {
-                console.error('插入排班失败:', insError);
-                throw new Error('插入排班失败: ' + insError.message);
-            }
+            if (insError) throw new Error('插入排班失败: ' + insError.message);
         }
     }
 
-    async saveSwaps() {
+    async syncSwapsToCloud() {
         if (!supabase) return;
-        await supabase.from('swaps').delete().neq('id', 0);
         if (this.swaps.length > 0) {
             const records = this.swaps.map(sw => ({
                 id: sw.id,
@@ -784,13 +897,12 @@ class DutyApp {
                 created_at: sw.createdAt,
                 approved_at: sw.approvedAt || null
             }));
-            const { error } = await supabase.from('swaps').insert(records);
-            if (error) throw new Error('保存换班记录失败: ' + error.message);
+            const { error } = await supabase.from('swaps').upsert(records, { onConflict: 'id' });
+            if (error) throw new Error('同步换班记录失败: ' + error.message);
         }
     }
 
     async save() {
-        // 先保存到本地（确保数据不丢失）
         localStorage.setItem('duty_posts', JSON.stringify(this.posts));
         localStorage.setItem('duty_staff', JSON.stringify(this.staff));
         localStorage.setItem('duty_schedule', JSON.stringify(this.schedule));
@@ -800,13 +912,12 @@ class DutyApp {
         this.updateSidebar();
         this.updateSwapBadge();
 
-        // 如果有云端，再同步到云端
         if (supabase) {
             this.showLoading('正在同步到云端...');
             try {
-                await this.saveStaff();
-                await this.saveSchedule();
-                await this.saveSwaps();
+                await this.syncStaffToCloud();
+                await this.syncScheduleToCloud();
+                await this.syncSwapsToCloud();
             } catch (err) {
                 console.error('云端同步失败:', err);
                 alert('云端同步失败，数据已保存到本地。\n错误: ' + err.message);
@@ -866,14 +977,19 @@ class DutyApp {
         document.getElementById('btn-redo').disabled = this.historyIndex >= this.history.length - 1;
     }
 
-    // ==================== 工具函数 ====================
+    // ==================== 工具函数（修复时区）====================
+    parseDateLocal(dateStr) {
+        const [y, m, d] = dateStr.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    }
+
     isWeekend(dateStr) {
-        const d = new Date(dateStr);
+        const d = this.parseDateLocal(dateStr);
         return d.getDay() === 0 || d.getDay() === 6;
     }
 
     getWeekdayName(dateStr) {
-        return ['周日','周一','周二','周三','周四','周五','周六'][new Date(dateStr).getDay()];
+        return ['周日','周一','周二','周三','周四','周五','周六'][this.parseDateLocal(dateStr).getDay()];
     }
 
     getMonthDays(year, month) {
@@ -898,6 +1014,10 @@ class DutyApp {
         document.getElementById('page-badge').textContent = tab === 'calendar' ? '本月' : (tab === 'swap' ? '审批' : '管理');
         if (tab === 'swap') this.renderSwapPage();
         if (tab === 'staff') this.renderStaffList();
+        if (window.innerWidth < 1024) {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('mobile-overlay').classList.remove('active');
+        }
     }
 
     fillSelect(id, items, labelKey) {
@@ -914,12 +1034,32 @@ class DutyApp {
 
     closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
+    // ==================== 动态颜色生成 ====================
+    getPostColorClass(postId) {
+        const colorMap = {
+            'short': 'badge-short', 'temp': 'badge-temp', 'service': 'badge-service',
+            'chief': 'badge-chief', 'lead': 'badge-lead', 'director': 'badge-director',
+            'boss': 'badge-boss', 'emergency': 'badge-emergency', 'radar': 'badge-radar',
+            'team': 'badge-team'
+        };
+        return colorMap[postId] || this.generateDynamicColor(postId);
+    }
+
+    generateDynamicColor(postId) {
+        let hash = 0;
+        for (let i = 0; i < postId.length; i++) {
+            hash = postId.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const idx = Math.abs(hash) % this.dynamicColors.length;
+        return 'bg-gradient-to-br ' + this.dynamicColors[idx];
+    }
+
     // ==================== 岗位管理 ====================
     renderPosts() {
         const legend = document.getElementById('legend-area');
         legend.innerHTML = this.posts.map(p => 
             `<div class="flex items-center bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
-                <span class="w-3 h-3 rounded-full mr-2 badge-${p.id}" style="display:inline-block;"></span>
+                <span class="w-3 h-3 rounded-full mr-2 ${this.getPostColorClass(p.id)}" style="display:inline-block;"></span>
                 <span class="text-slate-600">${p.name}</span>
             </div>`
         ).join('');
@@ -975,7 +1115,7 @@ class DutyApp {
 
     openStaffModal() { document.getElementById('staff-modal').classList.remove('hidden'); }
 
-    async saveStaff() {
+    async saveNewStaff() {
         const name = document.getElementById('staff-name').value.trim();
         const postId = document.getElementById('staff-post').value;
         const contact = document.getElementById('staff-contact').value.trim();
@@ -1024,7 +1164,7 @@ class DutyApp {
 
         for (let i = 0; i < pad; i++) {
             const empty = document.createElement('div');
-            empty.className = 'min-h-[130px]';
+            empty.className = 'min-h-[90px] md:min-h-[130px]';
             grid.appendChild(empty);
         }
 
@@ -1036,18 +1176,20 @@ class DutyApp {
             const weekdayName = this.getWeekdayName(ds);
 
             const cell = document.createElement('div');
-            cell.className = `calendar-day p-3 border ${weekend ? 'weekend border-amber-200' : 'weekday border-slate-100'} ${today ? 'today' : ''}`;
+            cell.className = `calendar-day p-2 md:p-3 border ${weekend ? 'weekend border-amber-200' : 'weekday border-slate-100'} ${today ? 'today' : ''}`;
             cell.dataset.date = ds;
             cell.onclick = () => this.openDayModal(ds);
 
             const hd = document.createElement('div');
-            hd.className = 'flex justify-between items-center mb-2';
+            hd.className = 'flex justify-between items-center mb-2 relative';
             hd.innerHTML = `
                 <span class="font-bold text-sm ${today ? 'text-blue-600' : (weekend ? 'text-amber-700' : 'text-slate-700')}">${d}</span>
                 <span class="text-[10px] ${weekend ? 'text-amber-500' : 'text-slate-400'}">${weekdayName}</span>
             `;
             if (today) {
-                hd.innerHTML += `<span class="absolute top-2 right-2 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>`;
+                const indicator = document.createElement('span');
+                indicator.className = 'absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse';
+                hd.appendChild(indicator);
             }
             cell.appendChild(hd);
 
@@ -1056,10 +1198,10 @@ class DutyApp {
                 const po = this.getPost(sh.postId);
                 if (st && po) {
                     const badge = document.createElement('div');
-                    badge.className = `shift-badge badge-${sh.postId}`;
+                    badge.className = `shift-badge ${this.getPostColorClass(sh.postId)}`;
                     badge.innerHTML = `
-                        <span class="font-medium">${po.name}:${st.name}</span>
-                        <span class="text-[10px] opacity-70 ml-1">${sh.shiftType === 'rest' ? '休' : '工'}</span>
+                        <span class="font-medium truncate">${po.name}:${st.name}</span>
+                        <span class="text-[10px] opacity-70 ml-1 shrink-0">${sh.shiftType === 'rest' ? '休' : '工'}</span>
                     `;
                     cell.appendChild(badge);
                 }
@@ -1080,12 +1222,14 @@ class DutyApp {
         return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d;
     }
 
-    changeMonth(delta) {
+    async changeMonth(delta) {
+        await this.save();
         this.currentDate.setMonth(this.currentDate.getMonth() + delta);
         this.renderCalendar();
     }
 
-    jumpToMonth() {
+    async jumpToMonth() {
+        await this.save();
         const val = document.getElementById('jump-month-input').value;
         if (!val) return;
         const [y, m] = val.split('-').map(Number);
@@ -1117,7 +1261,7 @@ class DutyApp {
                         <div class="w-8 h-8 rounded-lg ${sh.shiftType === 'rest' ? 'bg-amber-200 text-amber-700' : 'bg-blue-200 text-blue-700'} flex items-center justify-center mr-3 font-bold text-xs">${sh.shiftType === 'rest' ? '休' : '工'}</div>
                         <div>
                             <div class="font-medium text-slate-700">${po?.name || ''}：${st?.name || '未知'}</div>
-                            <div class="text-xs text-slate-400">${sh.shiftType === 'rest' ? '休息日值班' : '工作日值班'}</div>
+                            <div class="text-xs text-slate-400">${weekend ? '休息日值班' : '工作日值班'}</div>
                         </div>
                     </div>
                     <button onclick="app.removeShift('${ds}', ${idx})" class="text-slate-300 hover:text-red-500 transition"><i class="fas fa-trash-alt"></i></button>
@@ -1155,7 +1299,7 @@ class DutyApp {
         this.openDayModal(ds);
     }
 
-    // ==================== 统计 ====================
+    // ==================== 统计（统一以日期属性为准）====================
     calcAllStats() {
         const stats = {};
         this.staff.forEach(s => { stats[s.id] = {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[], posts:new Set()}; });
@@ -1165,7 +1309,7 @@ class DutyApp {
                 if (stats[sh.staffId]) {
                     const post = this.getPost(sh.postId);
                     if (post) stats[sh.staffId].posts.add(post.name);
-                    if (isWeekend || sh.shiftType === 'rest') {
+                    if (isWeekend) {
                         stats[sh.staffId].weekend++;
                         stats[sh.staffId].weekendDates.push(ds);
                     } else {
@@ -1197,7 +1341,7 @@ class DutyApp {
                 if (stats[sh.staffId]) {
                     const post = this.getPost(sh.postId);
                     if (post) stats[sh.staffId].posts.add(post.name);
-                    if (isWeekend || sh.shiftType === 'rest') {
+                    if (isWeekend) {
                         stats[sh.staffId].weekend++;
                         stats[sh.staffId].weekendDates.push(ds);
                     } else {
@@ -1234,10 +1378,22 @@ class DutyApp {
         const y = this.currentDate.getFullYear();
         const m = this.currentDate.getMonth() + 1;
         document.getElementById('sidebar-month').textContent = `${y}年${m}月`;
+        const statusDot = document.getElementById('db-status-dot');
+        const statusText = document.getElementById('db-status');
+        if (supabase) {
+            statusDot.className = 'w-2 h-2 rounded-full bg-green-400 mr-2';
+            statusText.textContent = '云数据库';
+        } else {
+            statusDot.className = 'w-2 h-2 rounded-full bg-amber-400 mr-2';
+            statusText.textContent = '本地存储';
+        }
     }
 
     async syncFromCloud() {
         if (!supabase) return alert('云端未连接');
+        if (Object.keys(this.schedule).length > 0 || this.swaps.length > 0) {
+            if (!confirm('同步将合并云端数据到本地，本地已有的记录不会被覆盖。\n是否继续？')) return;
+        }
         this.showLoading('正在同步云端数据...');
         try {
             await this.loadAllData();
@@ -1271,7 +1427,7 @@ class DutyApp {
         }
     }
 
-    // ==================== 自动排班 ====================
+    // ==================== 自动排班（修复 idx 共享）====================
     openGenerateModal() { document.getElementById('generate-modal').classList.remove('hidden'); }
 
     async generateSchedule() {
@@ -1290,7 +1446,7 @@ class DutyApp {
             delete this.schedule[ds];
         }
 
-        let idx = 0;
+        const idxMap = {};
         for (let d = 1; d <= days; d++) {
             const ds = this.formatDateStr(y, m, d);
             const isWeekend = this.isWeekend(ds);
@@ -1299,8 +1455,13 @@ class DutyApp {
                 const pool = this.staff.filter(s => s.postId === pid);
                 if (!pool.length) pool.push(...this.staff);
                 let sel;
-                if (pattern === 'cycle') { sel = pool[idx % pool.length]; idx++; }
-                else sel = pool[Math.floor(Math.random() * pool.length)];
+                if (pattern === 'cycle') {
+                    idxMap[pid] = idxMap[pid] || 0;
+                    sel = pool[idxMap[pid] % pool.length];
+                    idxMap[pid]++;
+                } else {
+                    sel = pool[Math.floor(Math.random() * pool.length)];
+                }
                 if (sel && !this.schedule[ds].find(s => s.staffId === sel.id && s.postId === pid)) {
                     this.schedule[ds].push({staffId: sel.id, postId: pid, shiftType: isWeekend ? 'rest' : 'normal'});
                 }
@@ -1494,11 +1655,19 @@ class DutyApp {
         if (sw) { sw.status='rejected'; sw.approvedAt = new Date().toISOString(); await this.save(); this.renderSwapList(); }
     }
 
-    // ==================== 导入功能 ====================
+    // ==================== 导入功能（核心修复：colMap 作用域）====================
     handleImportFile(input) {
         const file = input.files[0];
         if (!file) return;
         document.getElementById('import-file-name').textContent = file.name;
+        
+        const yearMatch = file.name.match(/(20\d{2})/);
+        if (yearMatch) {
+            document.getElementById('import-year').value = yearMatch[1];
+        } else {
+            document.getElementById('import-year').value = new Date().getFullYear();
+        }
+        
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
@@ -1524,9 +1693,16 @@ class DutyApp {
     previewSheet(sheetName) {
         const ws = this.importWorkbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-        const preview = json.slice(0, 6);
         const thead = document.querySelector('#preview-table thead');
         const tbody = document.querySelector('#preview-table tbody');
+        
+        if (!json.length) {
+            thead.innerHTML = '';
+            tbody.innerHTML = '<tr><td class="px-3 py-2 text-slate-400 text-center">空 Sheet，无数据</td></tr>';
+            return;
+        }
+        
+        const preview = json.slice(0, 6);
         if (preview.length) {
             thead.innerHTML = '<tr>' + preview[0].map((c, i) => `<th class="px-3 py-2 border text-left bg-slate-100">列${i+1}</th>`).join('') + '</tr>';
             tbody.innerHTML = preview.slice(1).map(row => 
@@ -1549,12 +1725,15 @@ class DutyApp {
 
         this.pushHistory('导入Excel');
 
+        const yearInput = document.getElementById('import-year');
+        const year = parseInt(yearInput?.value) || new Date().getFullYear();
+
         const nameToId = {};
         this.staff.forEach(s => nameToId[s.name] = s.id);
 
         const getOrCreateStaff = (name, defaultPostId) => {
             if (!name) return null;
-            name = String(name).replace(/\s+/g, '').trim();
+            name = String(name).trim();
             if (!name || name === '-' || name === '无' || name === 'NaN') return null;
             if (nameToId[name]) return nameToId[name];
             const id = Date.now() + Math.floor(Math.random() * 100000);
@@ -1571,7 +1750,6 @@ class DutyApp {
         });
 
         let count = 0;
-        const year = 2026;
 
         selectedSheets.forEach(sheetName => {
             const ws = this.importWorkbook.Sheets[sheetName];
@@ -1582,11 +1760,14 @@ class DutyApp {
             const m = sheetName.match(/(\d{1,2})\s*月/);
             if (m) sheetMonth = parseInt(m[1]);
 
+            // ==================== 核心修复 ====================
+            // 将 colMap 提升为 sheet 级别变量，确保表头检测后能在后续行解析中使用
             let headerRow = -1;
-            let colMap = {};
+            let headerColMap = {};
 
             for (let r = 0; r < Math.min(8, json.length); r++) {
                 const row = json[r];
+                let colMap = {}; // 临时检测用
                 let hasDate = false, mapped = 0;
                 row.forEach((cell, c) => {
                     const val = String(cell).trim();
@@ -1601,7 +1782,11 @@ class DutyApp {
                     else if (val.includes('小夜班') && val.includes('正常')) { colMap[c] = {postId: postMap['短临主班'] || 'temp', type: 'normal'}; mapped++; }
                     else if (val.includes('小夜班') && val.includes('休息')) { colMap[c] = {postId: postMap['短临主班'] || 'temp', type: 'rest'}; mapped++; }
                 });
-                if ((hasDate && mapped > 0) || mapped >= 2) { headerRow = r; break; }
+                if ((hasDate && mapped > 0) || mapped >= 2) { 
+                    headerRow = r; 
+                    headerColMap = colMap; // 保存检测到的列映射
+                    break; 
+                }
             }
 
             if (headerRow === -1) return;
@@ -1618,15 +1803,18 @@ class DutyApp {
                     continue;
                 }
 
-                if (row[0] && String(row[0]).trim() && !String(row[0]).includes('合计') && !String(row[0]).includes('签字') && !String(row[0]).includes('备注')) {
-                    currentPerson = String(row[0]).trim();
+                const firstCol = row[0] ? String(row[0]).trim() : '';
+                if (firstCol && 
+                    !/合计|签字|备注|统计|日期|月份|年份|汇总|总数/i.test(firstCol) &&
+                    firstCol.length <= 6) {
+                    currentPerson = firstCol;
                 }
 
                 if (!currentPerson) continue;
 
                 let dateVal = null;
                 for (let c = 0; c < row.length; c++) {
-                    if (colMap[c] === 'date') {
+                    if (headerColMap[c] === 'date') {
                         dateVal = String(row[c]).trim().replace('日', '');
                         break;
                     }
@@ -1637,13 +1825,14 @@ class DutyApp {
                 const ds = `${year}-${String(currentMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 if (!this.schedule[ds]) this.schedule[ds] = [];
 
-                Object.keys(colMap).forEach(c => {
-                    const colInfo = colMap[c];
+                // 使用 headerColMap 而不是已销毁的 colMap
+                Object.keys(headerColMap).forEach(c => {
+                    const colInfo = headerColMap[c];
                     if (colInfo === 'date') return;
                     const name = String(row[c] || '').trim();
                     if (!name || name === '-' || name === '无' || name === 'NaN') return;
 
-                    const staffName = (row[0] && String(row[0]).trim() && !String(row[0]).includes('合计')) ? String(row[0]).trim() : currentPerson;
+                    const staffName = (firstCol && !/合计|签字|备注|统计/i.test(firstCol)) ? firstCol : currentPerson;
                     const sid = getOrCreateStaff(staffName, colInfo.postId);
                     if (sid && !this.schedule[ds].find(s => s.staffId === sid && s.postId === colInfo.postId)) {
                         this.schedule[ds].push({staffId: sid, postId: colInfo.postId, shiftType: colInfo.type});
@@ -1714,7 +1903,7 @@ class DutyApp {
         const data = [header];
         for (let d = 1; d <= days; d++) {
             const ds = this.formatDateStr(y, m, d);
-            const wk = ['日','一','二','三','四','五','六'][new Date(y, m-1, d).getDay()];
+            const wk = ['日','一','二','三','四','五','六'][this.parseDateLocal(ds).getDay()];
             const isWeekend = this.isWeekend(ds);
             const shifts = (this.schedule[ds] || []).filter(s => selectedPosts.includes(s.postId));
             const row = [ds, wk, isWeekend ? '休息日' : '工作日'];

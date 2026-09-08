@@ -85,7 +85,7 @@
 <!-- 移动端遮罩 -->
 <div id="mobile-overlay" class="mobile-overlay" onclick="app.toggleSidebar()"></div>
 
-<!-- 数据库连接设置（仅失败或手动更换时显示） -->
+<!-- 数据库连接设置 -->
 <div id="config-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center p-4">
     <div class="modal-content bg-white rounded-2xl p-6 md:p-8 w-full max-w-[500px] shadow-2xl">
         <div class="text-center mb-6">
@@ -165,6 +165,7 @@
                 <button onclick="app.syncFromCloud()" class="text-xs text-blue-400 hover:text-blue-300 underline">手动同步云端</button>
                 <button onclick="app.showConfigModal()" class="text-xs text-slate-500 hover:text-slate-300 underline">更换数据库</button>
             </div>
+            <div id="sync-debug" class="mt-2 text-[10px] text-slate-500 font-mono"></div>
         </div>
     </div>
 </aside>
@@ -578,10 +579,12 @@ try {
     if (window.supabase && SUPABASE_URL && SUPABASE_KEY) {
         supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         USE_CLOUD = true;
-        console.log('Supabase 自动连接成功');
+        console.log('[Supabase] 客户端初始化成功');
+    } else {
+        console.warn('[Supabase] 缺少库或配置');
     }
 } catch (err) {
-    console.error('Supabase 初始化失败:', err);
+    console.error('[Supabase] 初始化失败:', err);
 }
 
 class DutyApp {
@@ -600,7 +603,6 @@ class DutyApp {
         this.isLoading = false;
         this.hasPushedInitialHistory = false;
 
-        // 默认岗位
         this.defaultPosts = [
             {id:'short', name:'短期主班'},
             {id:'temp', name:'短临主班'},
@@ -614,7 +616,6 @@ class DutyApp {
             {id:'team', name:'领班岗'}
         ];
 
-        // 动态颜色池（用于新增岗位）
         this.dynamicColors = [
             'from-slate-100 to-slate-200 text-slate-700 border-slate-300',
             'from-orange-100 to-orange-200 text-orange-700 border-orange-300',
@@ -626,20 +627,16 @@ class DutyApp {
             'from-indigo-100 to-indigo-200 text-indigo-700 border-indigo-300',
         ];
 
-        // 如果没有数据，加载演示数据
         if (Object.keys(this.schedule).length === 0 && this.staff.length === 0) {
             this.loadDemoData();
         }
 
-        // 异步初始化（云端同步）
         this.init().catch(err => {
-            console.error('云端同步失败，使用本地数据:', err);
+            console.error('初始化失败:', err);
         });
     }
 
-    // ==================== 初始化 ====================
     async init() {
-        // 先渲染本地数据（确保页面不白屏）
         this.renderPosts();
         this.renderCalendar();
         this.updateStats();
@@ -650,19 +647,27 @@ class DutyApp {
         document.getElementById('export-month-from').value = '2026-07';
         document.getElementById('export-month-to').value = '2026-07';
 
-        // 自动同步云端数据（已内置配置，无需手动输入）
         if (supabase) {
             try {
+                console.log('[Sync] 开始从云端加载数据...');
                 await this.loadAllData();
+                console.log('[Sync] 云端数据加载完成');
                 this.renderPosts();
                 this.renderCalendar();
                 this.updateStats();
                 this.renderStaffList();
-                console.log('云端数据同步成功');
             } catch (err) {
-                console.error('云端同步失败，使用本地数据:', err);
+                console.error('[Sync] 云端同步失败:', err);
+                this.setSyncDebug('云端加载失败: ' + err.message);
             }
+        } else {
+            this.setSyncDebug('未连接云端');
         }
+    }
+
+    setSyncDebug(msg) {
+        const el = document.getElementById('sync-debug');
+        if (el) el.textContent = msg;
     }
 
     toggleSidebar() {
@@ -682,7 +687,6 @@ class DutyApp {
         const url = document.getElementById('sb-url').value.trim();
         const key = document.getElementById('sb-key').value.trim();
         if (!url || !key) return alert('请填写完整的 URL 和 Key');
-
         localStorage.setItem('sb_url', url);
         localStorage.setItem('sb_key', key);
         location.reload();
@@ -691,13 +695,11 @@ class DutyApp {
     useLocalOnly() {
         localStorage.setItem('sb_skip_config', '1');
         document.getElementById('config-modal').classList.add('hidden');
-        alert('已切换为仅本地存储模式。如需连接云端，请点击侧边栏底部的"更换数据库"。');
+        alert('已切换为仅本地存储模式');
     }
 
-    // ==================== 演示数据 ====================
     loadDemoData() {
         this.posts = JSON.parse(JSON.stringify(this.defaultPosts));
-        
         const demoStaff = [
             {id: 1001, name: '张三', postId: 'short', contact: '13800138001'},
             {id: 1002, name: '李四', postId: 'temp', contact: '13800138002'},
@@ -708,13 +710,11 @@ class DutyApp {
             {id: 1007, name: '吴九', postId: 'temp', contact: '13800138007'},
         ];
         this.staff = demoStaff;
-        
         const y = 2026, m = 7;
         const days = this.getMonthDays(y, m);
         this.schedule = {};
-        
         const postIds = ['short', 'temp', 'service', 'chief', 'lead'];
-        postIds.forEach((pid, pIdx) => {
+        postIds.forEach(pid => {
             const pool = this.staff.filter(s => s.postId === pid);
             if (pool.length === 0) return;
             let idx = 0;
@@ -723,39 +723,33 @@ class DutyApp {
                 const isWeekend = this.isWeekend(ds);
                 if (!this.schedule[ds]) this.schedule[ds] = [];
                 const person = pool[idx % pool.length];
-                this.schedule[ds].push({
-                    staffId: person.id,
-                    postId: pid,
-                    shiftType: isWeekend ? 'rest' : 'normal'
-                });
+                this.schedule[ds].push({staffId: person.id, postId: pid, shiftType: isWeekend ? 'rest' : 'normal'});
                 idx++;
             }
         });
-        
         localStorage.setItem('duty_posts', JSON.stringify(this.posts));
         localStorage.setItem('duty_staff', JSON.stringify(this.staff));
         localStorage.setItem('duty_schedule', JSON.stringify(this.schedule));
     }
 
-    // ==================== 数据加载（Supabase）====================
     async loadAllData() {
         this.showLoading('正在从云端加载数据...');
         try {
             const { data: postsData, error: postsError } = await supabase.from('posts').select('*').order('id');
-            if (postsError) throw new Error('岗位表访问失败: ' + postsError.message);
-            
+            if (postsError) throw new Error('岗位表: ' + postsError.message);
             if (postsData && postsData.length > 0) {
                 this.posts = postsData;
+                console.log('[Sync] 岗位已加载:', postsData.length);
             } else {
                 this.posts = [...this.defaultPosts];
                 for (const p of this.defaultPosts) {
                     await supabase.from('posts').upsert({id: p.id, name: p.name}, {onConflict: 'id'});
                 }
+                console.log('[Sync] 已初始化默认岗位到云端');
             }
 
             const { data: staffData, error: staffError } = await supabase.from('staff').select('*').order('id');
-            if (staffError) throw new Error('人员表访问失败: ' + staffError.message);
-            
+            if (staffError) throw new Error('人员表: ' + staffError.message);
             if (staffData && staffData.length > 0) {
                 const localStaffIds = new Set(this.staff.map(s => s.id));
                 staffData.forEach(s => {
@@ -763,58 +757,47 @@ class DutyApp {
                         this.staff.push({id: s.id, name: s.name, postId: s.post_id, contact: s.contact || ''});
                     }
                 });
+                console.log('[Sync] 人员已合并:', staffData.length);
             }
 
             const { data: scheduleData, error: scheduleError } = await supabase.from('schedules').select('*');
-            if (scheduleError) throw new Error('排班表访问失败: ' + scheduleError.message);
-            
+            if (scheduleError) throw new Error('排班表: ' + scheduleError.message);
             if (scheduleData) {
+                let added = 0;
                 scheduleData.forEach(s => {
                     if (!this.schedule[s.date]) this.schedule[s.date] = [];
-                    const exists = this.schedule[s.date].find(
-                        local => local.staffId === s.staff_id && local.postId === s.post_id
-                    );
+                    const exists = this.schedule[s.date].find(l => l.staffId === s.staff_id && l.postId === s.post_id);
                     if (!exists) {
-                        this.schedule[s.date].push({
-                            staffId: s.staff_id,
-                            postId: s.post_id,
-                            shiftType: s.shift_type
-                        });
+                        this.schedule[s.date].push({staffId: s.staff_id, postId: s.post_id, shiftType: s.shift_type});
+                        added++;
                     }
                 });
+                console.log('[Sync] 排班已合并:', added, '条新记录');
             }
 
             const { data: swapsData, error: swapsError } = await supabase.from('swaps').select('*').order('created_at', {ascending: false});
-            if (swapsError) throw new Error('换班表访问失败: ' + swapsError.message);
-            
+            if (swapsError) throw new Error('换班表: ' + swapsError.message);
             if (swapsData) {
                 const localSwapIds = new Set(this.swaps.map(s => s.id));
                 swapsData.forEach(sw => {
                     if (!localSwapIds.has(sw.id)) {
                         this.swaps.push({
-                            id: sw.id,
-                            fromId: sw.from_id,
-                            toId: sw.to_id,
-                            fromDate: sw.from_date,
-                            toDate: sw.to_date,
-                            fromPostId: sw.from_post_id,
-                            toPostId: sw.to_post_id,
-                            fromName: sw.from_name,
-                            toName: sw.to_name,
-                            fromPostName: sw.from_post_name,
-                            toPostName: sw.to_post_name,
-                            reason: sw.reason,
-                            status: sw.status,
-                            createdAt: sw.created_at,
-                            approvedAt: sw.approved_at
+                            id: sw.id, fromId: sw.from_id, toId: sw.to_id,
+                            fromDate: sw.from_date, toDate: sw.to_date,
+                            fromPostId: sw.from_post_id, toPostId: sw.to_post_id,
+                            fromName: sw.from_name, toName: sw.to_name,
+                            fromPostName: sw.from_post_name, toPostName: sw.to_post_name,
+                            reason: sw.reason, status: sw.status,
+                            createdAt: sw.created_at, approvedAt: sw.approved_at
                         });
                     }
                 });
+                console.log('[Sync] 换班已合并:', swapsData.length);
             }
-
+            this.setSyncDebug('云端同步正常');
         } catch (err) {
-            console.error('加载数据失败:', err);
-            alert('连接数据库失败: ' + err.message + '\n\n已自动降级为本地存储模式。');
+            console.error('[Sync] 加载失败:', err);
+            this.setSyncDebug('失败: ' + err.message);
             throw err;
         } finally {
             this.hideLoading();
@@ -830,47 +813,35 @@ class DutyApp {
         document.getElementById('global-loading').style.display = 'none';
     }
 
-    // ==================== 数据保存到云端 ====================
     async syncStaffToCloud() {
         if (!supabase) return;
         if (this.staff.length === 0) {
             await supabase.from('staff').delete().neq('id', 0);
             return;
         }
-        const records = this.staff.map(s => ({
-            id: s.id,
-            name: s.name,
-            post_id: s.postId,
-            contact: s.contact || ''
-        }));
+        const records = this.staff.map(s => ({id: s.id, name: s.name, post_id: s.postId, contact: s.contact || ''}));
+        console.log('[Sync] 同步人员:', records.length, '条');
         const { error } = await supabase.from('staff').upsert(records, { onConflict: 'id' });
         if (error) throw new Error('同步人员失败: ' + error.message);
     }
 
     async syncScheduleToCloud() {
         if (!supabase) return;
-
         const y = this.currentDate.getFullYear();
         const m = this.currentDate.getMonth() + 1;
         const monthPrefix = `${y}-${String(m).padStart(2,'0')}`;
-
+        console.log('[Sync] 同步月份:', monthPrefix);
         const { error: delError } = await supabase.from('schedules').delete().like('date', `${monthPrefix}%`);
         if (delError) throw new Error('删除旧排班失败: ' + delError.message);
-
         const inserts = [];
         Object.keys(this.schedule).forEach(date => {
             if (date.startsWith(monthPrefix)) {
                 this.schedule[date].forEach(sh => {
-                    inserts.push({
-                        date: date,
-                        staff_id: sh.staffId,
-                        post_id: sh.postId,
-                        shift_type: sh.shiftType
-                    });
+                    inserts.push({date: date, staff_id: sh.staffId, post_id: sh.postId, shift_type: sh.shiftType});
                 });
             }
         });
-
+        console.log('[Sync] 排班插入:', inserts.length, '条');
         if (inserts.length > 0) {
             const { error: insError } = await supabase.from('schedules').insert(inserts);
             if (insError) throw new Error('插入排班失败: ' + insError.message);
@@ -881,24 +852,17 @@ class DutyApp {
         if (!supabase) return;
         if (this.swaps.length > 0) {
             const records = this.swaps.map(sw => ({
-                id: sw.id,
-                from_id: sw.fromId,
-                to_id: sw.toId,
-                from_date: sw.fromDate,
-                to_date: sw.toDate,
-                from_post_id: sw.fromPostId,
-                to_post_id: sw.toPostId,
-                from_name: sw.fromName,
-                to_name: sw.toName,
-                from_post_name: sw.fromPostName,
-                to_post_name: sw.toPostName,
-                reason: sw.reason,
-                status: sw.status,
-                created_at: sw.createdAt,
-                approved_at: sw.approvedAt || null
+                id: sw.id, from_id: sw.fromId, to_id: sw.toId,
+                from_date: sw.fromDate, to_date: sw.toDate,
+                from_post_id: sw.fromPostId, to_post_id: sw.toPostId,
+                from_name: sw.fromName, to_name: sw.toName,
+                from_post_name: sw.fromPostName, to_post_name: sw.toPostName,
+                reason: sw.reason, status: sw.status,
+                created_at: sw.createdAt, approved_at: sw.approvedAt || null
             }));
+            console.log('[Sync] 同步换班:', records.length, '条');
             const { error } = await supabase.from('swaps').upsert(records, { onConflict: 'id' });
-            if (error) throw new Error('同步换班记录失败: ' + error.message);
+            if (error) throw new Error('同步换班失败: ' + error.message);
         }
     }
 
@@ -907,7 +871,6 @@ class DutyApp {
         localStorage.setItem('duty_staff', JSON.stringify(this.staff));
         localStorage.setItem('duty_schedule', JSON.stringify(this.schedule));
         localStorage.setItem('duty_swaps', JSON.stringify(this.swaps));
-
         this.updateStats();
         this.updateSidebar();
         this.updateSwapBadge();
@@ -915,11 +878,15 @@ class DutyApp {
         if (supabase) {
             this.showLoading('正在同步到云端...');
             try {
+                console.log('[Sync] 开始保存到云端...');
                 await this.syncStaffToCloud();
                 await this.syncScheduleToCloud();
                 await this.syncSwapsToCloud();
+                console.log('[Sync] 云端保存成功');
+                this.setSyncDebug('云端同步正常');
             } catch (err) {
-                console.error('云端同步失败:', err);
+                console.error('[Sync] 云端保存失败:', err);
+                this.setSyncDebug('保存失败: ' + err.message);
                 alert('云端同步失败，数据已保存到本地。\n错误: ' + err.message);
             } finally {
                 this.hideLoading();
@@ -927,15 +894,13 @@ class DutyApp {
         }
     }
 
-    // ==================== 撤销/重做 ====================
     pushHistory(desc) {
         const snapshot = {
             posts: JSON.parse(JSON.stringify(this.posts)),
             staff: JSON.parse(JSON.stringify(this.staff)),
             schedule: JSON.parse(JSON.stringify(this.schedule)),
             swaps: JSON.parse(JSON.stringify(this.swaps)),
-            desc: desc,
-            time: new Date().toLocaleTimeString()
+            desc: desc, time: new Date().toLocaleTimeString()
         };
         if (this.historyIndex < this.history.length - 1) {
             this.history = this.history.slice(0, this.historyIndex + 1);
@@ -977,7 +942,6 @@ class DutyApp {
         document.getElementById('btn-redo').disabled = this.historyIndex >= this.history.length - 1;
     }
 
-    // ==================== 工具函数（修复时区）====================
     parseDateLocal(dateStr) {
         const [y, m, d] = dateStr.split('-').map(Number);
         return new Date(y, m - 1, d);
@@ -1034,7 +998,6 @@ class DutyApp {
 
     closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-    // ==================== 动态颜色生成 ====================
     getPostColorClass(postId) {
         const colorMap = {
             'short': 'badge-short', 'temp': 'badge-temp', 'service': 'badge-service',
@@ -1054,7 +1017,6 @@ class DutyApp {
         return 'bg-gradient-to-br ' + this.dynamicColors[idx];
     }
 
-    // ==================== 岗位管理 ====================
     renderPosts() {
         const legend = document.getElementById('legend-area');
         legend.innerHTML = this.posts.map(p => 
@@ -1074,7 +1036,6 @@ class DutyApp {
         ).join('');
     }
 
-    // ==================== 人员管理 ====================
     renderStaffList() {
         const list = document.getElementById('staff-list');
         if (!list) return;
@@ -1143,7 +1104,6 @@ class DutyApp {
         this.renderCalendar();
     }
 
-    // ==================== 日历 ====================
     renderCalendar() {
         const y = this.currentDate.getFullYear();
         const m = this.currentDate.getMonth() + 1;
@@ -1299,7 +1259,6 @@ class DutyApp {
         this.openDayModal(ds);
     }
 
-    // ==================== 统计（统一以日期属性为准）====================
     calcAllStats() {
         const stats = {};
         this.staff.forEach(s => { stats[s.id] = {workday:0, weekend:0, total:0, workdayDates:[], weekendDates:[], posts:new Set()}; });
@@ -1427,7 +1386,6 @@ class DutyApp {
         }
     }
 
-    // ==================== 自动排班（修复 idx 共享）====================
     openGenerateModal() { document.getElementById('generate-modal').classList.remove('hidden'); }
 
     async generateSchedule() {
@@ -1474,7 +1432,6 @@ class DutyApp {
         alert('生成成功！');
     }
 
-    // ==================== 换班功能 ====================
     renderSwapPage() {
         this.fillSelect('swap-from', this.staff, 'name');
         this.fillSelect('swap-to', this.staff, 'name');
@@ -1655,7 +1612,6 @@ class DutyApp {
         if (sw) { sw.status='rejected'; sw.approvedAt = new Date().toISOString(); await this.save(); this.renderSwapList(); }
     }
 
-    // ==================== 导入功能（核心修复：colMap 作用域）====================
     handleImportFile(input) {
         const file = input.files[0];
         if (!file) return;
@@ -1760,14 +1716,12 @@ class DutyApp {
             const m = sheetName.match(/(\d{1,2})\s*月/);
             if (m) sheetMonth = parseInt(m[1]);
 
-            // ==================== 核心修复 ====================
-            // 将 colMap 提升为 sheet 级别变量，确保表头检测后能在后续行解析中使用
             let headerRow = -1;
             let headerColMap = {};
 
             for (let r = 0; r < Math.min(8, json.length); r++) {
                 const row = json[r];
-                let colMap = {}; // 临时检测用
+                let colMap = {};
                 let hasDate = false, mapped = 0;
                 row.forEach((cell, c) => {
                     const val = String(cell).trim();
@@ -1784,7 +1738,7 @@ class DutyApp {
                 });
                 if ((hasDate && mapped > 0) || mapped >= 2) { 
                     headerRow = r; 
-                    headerColMap = colMap; // 保存检测到的列映射
+                    headerColMap = colMap;
                     break; 
                 }
             }
@@ -1825,7 +1779,6 @@ class DutyApp {
                 const ds = `${year}-${String(currentMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 if (!this.schedule[ds]) this.schedule[ds] = [];
 
-                // 使用 headerColMap 而不是已销毁的 colMap
                 Object.keys(headerColMap).forEach(c => {
                     const colInfo = headerColMap[c];
                     if (colInfo === 'date') return;
@@ -1855,7 +1808,6 @@ class DutyApp {
         }
     }
 
-    // ==================== 导出功能 ====================
     setupExportListeners() {
         const filterContainer = document.getElementById('export-post-filter');
         filterContainer.innerHTML = this.posts.map(p => 

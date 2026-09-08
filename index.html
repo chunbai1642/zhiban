@@ -56,6 +56,7 @@
         .badge-emergency { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); color: #991b1b; border: 1px solid #fca5a5; }
         .badge-radar { background: linear-gradient(135deg, #cffafe 0%, #a5f3fc 100%); color: #155e75; border: 1px solid #67e8f9; }
         .badge-team { background: linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%); color: #9d174d; border: 1px solid #f9a8d4; }
+        .badge-generic { background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); color: #334155; border: 1px solid #cbd5e1; }
 
         /* 休息日标记 - 右下角小圆点 */
         .shift-badge .rest-marker {
@@ -292,9 +293,24 @@
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                 <div class="flex justify-between items-center mb-6">
                     <h3 class="text-lg font-bold text-slate-800">值班人员管理</h3>
-                    <button onclick="app.openStaffModal()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 transition">
-                        <i class="fas fa-plus mr-1"></i>添加人员
-                    </button>
+                    <div class="flex space-x-2">
+                        <button onclick="app.openPostModal()" class="px-4 py-2 bg-violet-600 text-white rounded-xl text-sm hover:bg-violet-700 transition">
+                            <i class="fas fa-briefcase mr-1"></i>岗位管理
+                        </button>
+                        <button onclick="app.toggleBatchMode()" id="batch-btn" class="px-4 py-2 bg-slate-600 text-white rounded-xl text-sm hover:bg-slate-700 transition">
+                            <i class="fas fa-check-square mr-1"></i>批量删除
+                        </button>
+                        <button onclick="app.openStaffModal()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 transition">
+                            <i class="fas fa-plus mr-1"></i>添加人员
+                        </button>
+                    </div>
+                </div>
+                <div id="batch-bar" class="hidden mb-4 flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                    <span class="text-sm text-red-600"><i class="fas fa-info-circle mr-1"></i>点击卡片勾选，已选 <b id="batch-count">0</b> 人</span>
+                    <div class="flex space-x-2">
+                        <button onclick="app.batchDeleteStaff()" class="px-4 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition"><i class="fas fa-trash-alt mr-1"></i>删除选中</button>
+                        <button onclick="app.toggleBatchMode()" class="px-4 py-1.5 bg-white text-slate-600 rounded-lg text-sm border border-slate-200 hover:bg-slate-50 transition">取消</button>
+                    </div>
                 </div>
                 <div id="staff-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
             </div>
@@ -463,6 +479,20 @@
     </div>
 </div>
 
+<!-- 岗位管理弹窗 -->
+<div id="post-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
+    <div class="modal-content bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <h3 class="text-lg font-bold text-slate-800 mb-1">岗位管理</h3>
+        <p class="text-xs text-slate-400 mb-4">点击名称可直接修改，点对号保存；删除岗位会一并清空相关排班</p>
+        <div id="post-manage-list" class="space-y-2 max-h-80 overflow-y-auto mb-4"></div>
+        <div class="flex space-x-2 mb-4">
+            <input id="new-post-name" placeholder="新岗位名称，如：领班岗" class="flex-1 border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-violet-500 outline-none transition">
+            <button onclick="app.addPost()" class="px-4 py-2 bg-violet-600 text-white rounded-xl text-sm hover:bg-violet-700 transition"><i class="fas fa-plus mr-1"></i>添加</button>
+        </div>
+        <button onclick="app.closeModal('post-modal')" class="w-full bg-slate-100 text-slate-600 py-2.5 rounded-xl font-medium hover:bg-slate-200 transition">关闭</button>
+    </div>
+</div>
+
 <!-- 日期详情模态框 -->
 <div id="day-modal" class="fixed inset-0 modal-overlay hidden z-50 flex items-center justify-center">
     <div class="modal-content bg-white rounded-2xl p-6 w-[520px] max-h-[85vh] overflow-y-auto shadow-2xl">
@@ -562,6 +592,8 @@ class DutyApp {
         this.currentTab = 'calendar';
         this.charts = {};
         this.swaps = JSON.parse(localStorage.getItem('duty_swaps')) || [];
+        this.batchMode = false;
+        this.selectedStaff = new Set();
 
         // 修改：只有不连云端且本地没数据时，才加载演示数据（避免污染云端真实数据）
         if (!supabase && Object.keys(this.schedule).length === 0) this.loadDemoData();
@@ -676,6 +708,7 @@ class DutyApp {
             await this.syncScheduleToCloud();
             await this.syncStaffToCloud();
             await this.syncSwapsToCloud();
+            await this.syncPostsPrune();
             this.updateSyncStatus('云端同步正常', 'bg-green-400');
         } catch (err) {
             console.error('云端同步失败:', err);
@@ -691,6 +724,14 @@ class DutyApp {
         const records = this.posts.map(p => ({id: p.id, name: p.name}));
         const { error } = await supabase.from('posts').upsert(records, {onConflict: 'id'});
         if (error) throw new Error('同步岗位失败: ' + error.message);
+    }
+
+    async syncPostsPrune() {
+        // 删除云端有而本地已删除的岗位（放在排班/人员同步之后，避免外键引用冲突）
+        if (!this.posts.length) return;
+        const localIds = this.posts.map(p => `"${p.id}"`).join(',');
+        const { error } = await supabase.from('posts').delete().not('id', 'in', `(${localIds})`);
+        if (error) console.warn('清理已删岗位失败:', error.message);
     }
 
     async syncStaffToCloud() {
@@ -981,7 +1022,7 @@ class DutyApp {
         const legend = document.getElementById('legend-area');
         legend.innerHTML = this.posts.map(p => 
             `<div class="flex items-center bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
-                <span class="w-3 h-3 rounded mr-2 badge-${p.id}" style="display:inline-block; border:none;"></span>
+                <span class="w-3 h-3 rounded mr-2 ${['short','temp','service','chief','lead','director','boss','emergency','radar','team'].includes(p.id) ? 'badge-' + p.id : 'badge-generic'}" style="display:inline-block; border:none;"></span>
                 <span class="text-slate-600">${p.name}</span>
             </div>`
         ).join('');
@@ -1023,14 +1064,20 @@ class DutyApp {
             el.innerHTML = `
                 <div class="flex justify-between items-start mb-3">
                     <div class="flex items-center">
+                        ${this.batchMode ? `<input type="checkbox" ${this.selectedStaff.has(s.id) ? 'checked' : ''} onclick="event.stopPropagation();app.toggleStaffSelect(${s.id})" class="mr-3 w-5 h-5 text-red-600 rounded cursor-pointer">` : ''}
                         <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold mr-3">${s.name.charAt(0)}</div>
                         <div>
                             <div class="font-bold text-slate-800">${s.name}</div>
                             <div class="text-xs text-slate-400">${p?.name || '未分配岗位'}</div>
                         </div>
                     </div>
-                    <button onclick="app.deleteStaff(${s.id})" class="text-slate-300 hover:text-red-500 transition"><i class="fas fa-trash-alt"></i></button>
+                    ${this.batchMode ? '' : `<button onclick="app.deleteStaff(${s.id})" class="text-slate-300 hover:text-red-500 transition"><i class="fas fa-trash-alt"></i></button>`}
                 </div>`;
+            if (this.batchMode) {
+                el.style.cursor = 'pointer';
+                if (this.selectedStaff.has(s.id)) el.classList.add('ring-2', 'ring-red-400', 'bg-red-50');
+                el.onclick = () => this.toggleStaffSelect(s.id);
+            }
             list.appendChild(el);
         });
         this.fillSelect('day-staff', this.staff, 'name');
@@ -1063,6 +1110,112 @@ class DutyApp {
         this.save();
         this.renderStaffList();
         this.renderCalendar();
+    }
+
+    // ========== 批量删除人员 ==========
+    toggleBatchMode() {
+        this.batchMode = !this.batchMode;
+        this.selectedStaff.clear();
+        document.getElementById('batch-bar').classList.toggle('hidden', !this.batchMode);
+        const btn = document.getElementById('batch-btn');
+        btn.classList.toggle('bg-red-600', this.batchMode);
+        btn.classList.toggle('bg-slate-600', !this.batchMode);
+        this.renderStaffList();
+        this.updateBatchCount();
+    }
+
+    toggleStaffSelect(id) {
+        if (this.selectedStaff.has(id)) this.selectedStaff.delete(id);
+        else this.selectedStaff.add(id);
+        this.renderStaffList();
+        this.updateBatchCount();
+    }
+
+    updateBatchCount() {
+        const el = document.getElementById('batch-count');
+        if (el) el.textContent = this.selectedStaff.size;
+    }
+
+    batchDeleteStaff() {
+        if (!this.selectedStaff.size) return alert('请先勾选要删除的人员');
+        if (!confirm(`确定删除选中的 ${this.selectedStaff.size} 名人员？\n这些人的所有排班会一并清空。`)) return;
+        this.pushHistory(`批量删除${this.selectedStaff.size}名人员`);
+        this.staff = this.staff.filter(s => !this.selectedStaff.has(s.id));
+        Object.keys(this.schedule).forEach(d => {
+            this.schedule[d] = this.schedule[d].filter(s => !this.selectedStaff.has(s.staffId));
+        });
+        this.toggleBatchMode();
+        this.save();
+        this.renderStaffList();
+        this.renderCalendar();
+    }
+
+    // ========== 岗位管理（增/删/改）==========
+    openPostModal() {
+        this.renderPostManageList();
+        document.getElementById('post-modal').classList.remove('hidden');
+    }
+
+    renderPostManageList() {
+        const box = document.getElementById('post-manage-list');
+        if (!this.posts.length) {
+            box.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">暂无岗位</p>';
+            return;
+        }
+        box.innerHTML = this.posts.map(p => `
+            <div class="flex items-center space-x-2 bg-slate-50 rounded-xl px-3 py-2 border border-slate-100">
+                <input value="${p.name}" id="post-name-${p.id}" class="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-violet-500">
+                <button onclick="app.renamePost('${p.id}')" title="保存修改" class="w-8 h-8 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"><i class="fas fa-check"></i></button>
+                <button onclick="app.deletePost('${p.id}')" title="删除岗位" class="w-8 h-8 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition"><i class="fas fa-trash-alt"></i></button>
+            </div>`).join('');
+    }
+
+    addPost() {
+        const input = document.getElementById('new-post-name');
+        const name = input.value.trim();
+        if (!name) return alert('请输入岗位名称');
+        if (this.posts.some(p => p.name === name)) return alert('该岗位已存在');
+        this.pushHistory('新增岗位：' + name);
+        this.posts.push({id: 'post_' + Date.now(), name, color: 'bg-slate-100 text-slate-800 border-slate-200'});
+        input.value = '';
+        this.save();
+        this.renderPosts();
+        this.renderPostManageList();
+        this.renderCalendar();
+    }
+
+    renamePost(id) {
+        const input = document.getElementById('post-name-' + id);
+        const name = input.value.trim();
+        if (!name) return alert('岗位名称不能为空');
+        if (this.posts.some(p => p.name === name && String(p.id) !== String(id))) return alert('该名称已被其他岗位使用');
+        const p = this.posts.find(p => String(p.id) === String(id));
+        if (!p || p.name === name) return;
+        this.pushHistory(`修改岗位：${p.name} → ${name}`);
+        p.name = name;
+        this.save();
+        this.renderPosts();
+        this.renderPostManageList();
+        this.renderCalendar();
+        this.renderStaffList();
+    }
+
+    deletePost(id) {
+        const p = this.posts.find(p => String(p.id) === String(id));
+        if (!p) return;
+        const usedCount = Object.values(this.schedule).flat().filter(s => String(s.postId) === String(id)).length;
+        if (!confirm(`确定删除岗位「${p.name}」？${usedCount ? `\n相关的 ${usedCount} 条排班会一并清空，` : '\n'}人员的默认岗位也会重置。`)) return;
+        this.pushHistory('删除岗位：' + p.name);
+        this.posts = this.posts.filter(x => String(x.id) !== String(id));
+        Object.keys(this.schedule).forEach(d => {
+            this.schedule[d] = this.schedule[d].filter(s => String(s.postId) !== String(id));
+        });
+        this.staff.forEach(s => { if (String(s.postId) === String(id)) s.postId = this.posts[0]?.id || ''; });
+        this.save();
+        this.renderPosts();
+        this.renderPostManageList();
+        this.renderCalendar();
+        this.renderStaffList();
     }
 
     renderCalendar() {
@@ -1118,7 +1271,8 @@ class DutyApp {
                 const po = this.getPost(sh.postId);
                 if (st && po) {
                     const badge = document.createElement('div');
-                    const postClass = `badge-${sh.postId}`;
+                    const knownBadges = ['short','temp','service','chief','lead','director','boss','emergency','radar','team'];
+                    const postClass = knownBadges.includes(sh.postId) ? `badge-${sh.postId}` : 'badge-generic';
                     badge.className = `shift-badge ${postClass}`;
                     // 格式: 岗位名:人名，休息日加标记
                     badge.innerHTML = `

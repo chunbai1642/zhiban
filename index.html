@@ -669,6 +669,7 @@ class DutyApp {
     async syncToCloud() {
         if (!supabase) return;
         try {
+            await this.syncPostsToCloud();
             await this.syncStaffToCloud();
             await this.syncScheduleToCloud();
             await this.syncSwapsToCloud();
@@ -677,6 +678,13 @@ class DutyApp {
             console.error('云端同步失败:', err);
             this.updateSyncStatus('同步失败', 'bg-red-400');
         }
+    }
+
+    async syncPostsToCloud() {
+        if (!this.posts.length) return;
+        const records = this.posts.map(p => ({id: p.id, name: p.name}));
+        const { error } = await supabase.from('posts').upsert(records, {onConflict: 'id'});
+        if (error) throw new Error('同步岗位失败: ' + error.message);
     }
 
     async syncStaffToCloud() {
@@ -695,30 +703,35 @@ class DutyApp {
     }
 
     async syncScheduleToCloud() {
-        const y = this.currentDate.getFullYear();
-        const m = this.currentDate.getMonth() + 1;
-        const monthPrefix = `${y}-${String(m).padStart(2,'0')}`;
-        
-        // 先删除该月旧数据
-        const { error: delError } = await supabase.from('schedules').delete().like('date', `${monthPrefix}%`);
-        if (delError) throw new Error('删除旧排班失败: ' + delError.message);
-        
-        // 插入新数据
+        // 同步本地所有月份（修复：原来只同步当前显示月份，导致导入的其他月份无法上云）
+        const monthSet = new Set();
+        Object.keys(this.schedule).forEach(date => {
+            if (this.schedule[date] && this.schedule[date].length) monthSet.add(date.slice(0, 7));
+        });
+        const months = [...monthSet];
+        if (!months.length) return;
+
+        // 并行删除云端这些月份的旧数据
+        const delResults = await Promise.all(months.map(mp =>
+            supabase.from('schedules').delete().like('date', `${mp}%`)
+        ));
+        const delErr = delResults.find(r => r.error);
+        if (delErr) throw new Error('删除旧排班失败: ' + delErr.error.message);
+
+        // 汇总所有记录，分批插入（每批500条）
         const inserts = [];
         Object.keys(this.schedule).forEach(date => {
-            if (date.startsWith(monthPrefix)) {
-                this.schedule[date].forEach(sh => {
-                    inserts.push({
-                        date: date,
-                        staff_id: sh.staffId,
-                        post_id: sh.postId,
-                        shift_type: sh.shiftType
-                    });
+            this.schedule[date].forEach(sh => {
+                inserts.push({
+                    date: date,
+                    staff_id: sh.staffId,
+                    post_id: sh.postId,
+                    shift_type: sh.shiftType
                 });
-            }
+            });
         });
-        if (inserts.length > 0) {
-            const { error: insError } = await supabase.from('schedules').insert(inserts);
+        for (let i = 0; i < inserts.length; i += 500) {
+            const { error: insError } = await supabase.from('schedules').insert(inserts.slice(i, i + 500));
             if (insError) throw new Error('插入排班失败: ' + insError.message);
         }
     }

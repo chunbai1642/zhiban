@@ -86,6 +86,25 @@
 <base target="_blank">
 </head>
 <body class="bg-slate-50 min-h-screen">
+<!-- 登录界面 -->
+<div id="login-screen" class="hidden fixed inset-0 z-[9999] flex items-center justify-center" style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);">
+    <div class="bg-white rounded-2xl p-8 w-full max-w-sm shadow-2xl mx-4">
+        <div class="flex items-center justify-center mb-6">
+            <div class="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg">
+                <i class="fas fa-cloud-sun text-2xl text-white"></i>
+            </div>
+        </div>
+        <h2 class="text-xl font-bold text-slate-800 text-center">巴彦淖尔市气象台</h2>
+        <p class="text-sm text-slate-400 text-center mb-6">值班智能管理系统</p>
+        <div class="space-y-4">
+            <input id="login-username" placeholder="账号" autocomplete="username" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition">
+            <input id="login-password" type="password" placeholder="密码" autocomplete="current-password" class="w-full border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition">
+            <p id="login-error" class="hidden text-sm text-red-500 text-center">账号或密码错误，请重试</p>
+            <button onclick="doLogin()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-medium hover:bg-blue-700 transition">登 录</button>
+        </div>
+    </div>
+</div>
+
 
 <aside class="fixed left-0 top-0 h-full w-64 bg-slate-900 text-white z-40 no-print flex flex-col">
     <div class="p-6 border-b border-slate-700">
@@ -129,6 +148,7 @@
                 <span id="sidebar-status">系统正常</span>
             </div>
             <button onclick="app.syncFromCloud()" class="mt-2 text-xs text-blue-400 hover:text-blue-300 underline">手动同步云端</button>
+            <button onclick="logout()" class="mt-1 text-xs text-slate-400 hover:text-red-400 underline">退出登录</button>
         </div>
     </div>
 </aside>
@@ -308,6 +328,7 @@
                 <div id="batch-bar" class="hidden mb-4 flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                     <span class="text-sm text-red-600"><i class="fas fa-info-circle mr-1"></i>点击卡片勾选，已选 <b id="batch-count">0</b> 人</span>
                     <div class="flex space-x-2">
+                        <button onclick="app.toggleSelectAll()" class="px-4 py-1.5 bg-white text-slate-600 rounded-lg text-sm border border-slate-200 hover:bg-slate-50 transition"><i class="fas fa-check-double mr-1"></i>全选</button>
                         <button onclick="app.batchDeleteStaff()" class="px-4 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition"><i class="fas fa-trash-alt mr-1"></i>删除选中</button>
                         <button onclick="app.toggleBatchMode()" class="px-4 py-1.5 bg-white text-slate-600 rounded-lg text-sm border border-slate-200 hover:bg-slate-50 transition">取消</button>
                     </div>
@@ -754,34 +775,33 @@ class DutyApp {
     }
 
     async syncScheduleToCloud() {
-        // 同步本地所有月份（修复：原来只同步当前显示月份，导致导入的其他月份无法上云）
+        // 逐月同步：每月一次删除+一次插入。即使中途被打断，最多影响一个月，下次同步自动修复
         const monthSet = new Set();
         Object.keys(this.schedule).forEach(date => {
             if (this.schedule[date] && this.schedule[date].length) monthSet.add(date.slice(0, 7));
         });
         if (!monthSet.size) return; // 本地无排班时跳过，防止异常情况下误清云端
-        const dates = Object.keys(this.schedule).filter(d => this.schedule[d] && this.schedule[d].length).sort();
-        const minDate = dates[0], maxDate = dates[dates.length - 1];
 
-        // 按日期范围删除云端旧数据（范围内的空月份也会被清掉）
-        const { error: delError } = await supabase.from('schedules').delete().gte('date', minDate).lte('date', maxDate);
-        if (delError) throw new Error('删除旧排班失败: ' + delError.message);
-
-        // 汇总所有记录，分批插入（每批500条）
-        const inserts = [];
-        Object.keys(this.schedule).forEach(date => {
-            this.schedule[date].forEach(sh => {
-                inserts.push({
-                    date: date,
-                    staff_id: sh.staffId,
-                    post_id: sh.postId,
-                    shift_type: sh.shiftType
-                });
+        for (const monthPrefix of monthSet) {
+            const inserts = [];
+            Object.keys(this.schedule).forEach(date => {
+                if (date.startsWith(monthPrefix)) {
+                    this.schedule[date].forEach(sh => {
+                        inserts.push({
+                            date: date,
+                            staff_id: sh.staffId,
+                            post_id: sh.postId,
+                            shift_type: sh.shiftType
+                        });
+                    });
+                }
             });
-        });
-        for (let i = 0; i < inserts.length; i += 500) {
-            const { error: insError } = await supabase.from('schedules').insert(inserts.slice(i, i + 500));
-            if (insError) throw new Error('插入排班失败: ' + insError.message);
+            const { error: delError } = await supabase.from('schedules').delete().like('date', `${monthPrefix}%`);
+            if (delError) throw new Error('删除旧排班失败: ' + delError.message);
+            if (inserts.length > 0) {
+                const { error: insError } = await supabase.from('schedules').insert(inserts);
+                if (insError) throw new Error('插入排班失败: ' + insError.message);
+            }
         }
     }
 
@@ -956,8 +976,11 @@ class DutyApp {
         this.updateStats();
         this.updateSidebar();
         this.updateSwapBadge();
-        // 新增：自动同步到云端（后台执行，不阻塞界面）
-        if (supabase) this.syncToCloud();
+        // 自动同步到云端（防抖：连续操作合并为一次同步）
+        if (supabase) {
+            clearTimeout(this._syncTimer);
+            this._syncTimer = setTimeout(() => { this._syncTimer = null; this.syncToCloud(); }, 1500);
+        }
     }
 
     pushHistory(desc) {
@@ -1120,6 +1143,13 @@ class DutyApp {
         const btn = document.getElementById('batch-btn');
         btn.classList.toggle('bg-red-600', this.batchMode);
         btn.classList.toggle('bg-slate-600', !this.batchMode);
+        this.renderStaffList();
+        this.updateBatchCount();
+    }
+
+    toggleSelectAll() {
+        if (this.selectedStaff.size === this.staff.length) this.selectedStaff.clear();
+        else this.staff.forEach(s => this.selectedStaff.add(s.id));
         this.renderStaffList();
         this.updateBatchCount();
     }
@@ -2072,7 +2102,60 @@ confirmImport() {
     closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 }
 
+// ==================== 账号登录 ====================
+// 【在这里修改账号密码】每行一个账号，格式 {username: '账号', password: '密码'}
+const APP_ACCOUNTS = [
+    {username: 'admin', password: 'byne2026'},
+];
+
+function doLogin() {
+    const u = document.getElementById('login-username').value.trim();
+    const p = document.getElementById('login-password').value;
+    const ok = APP_ACCOUNTS.some(a => a.username === u && a.password === p);
+    if (ok) {
+        localStorage.setItem('duty_auth', '1');
+        document.getElementById('login-screen').classList.add('hidden');
+    } else {
+        document.getElementById('login-error').classList.remove('hidden');
+        document.getElementById('login-password').value = '';
+    }
+}
+
+function logout() {
+    localStorage.removeItem('duty_auth');
+    location.reload();
+}
+
+// 回车快捷登录
+document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('login-username').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+// 未登录则显示登录界面
+if (localStorage.getItem('duty_auth') !== '1') {
+    document.getElementById('login-screen').classList.remove('hidden');
+}
+
 const app = new DutyApp();
+
+// ==================== 多设备数据一致性 ====================
+// 切回页面标签时自动从云端重新加载，避免旧页面把过期数据推回云端（删人/换班不同步的根源）
+// 同步未完成时阻止误关页面（防止云端数据被截断）
+window.addEventListener('beforeunload', e => {
+    if (typeof app !== 'undefined' && (app._syncing || app._syncTimer)) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+});
+
+let lastCloudReload = 0;
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !supabase || typeof app === 'undefined') return;
+    if (Date.now() - lastCloudReload < 5000) return;           // 防抖
+    if (app._syncing) return;                                   // 正在上传时跳过
+    if (document.querySelector('.modal-overlay:not(.hidden)')) return; // 有弹窗时跳过
+    lastCloudReload = Date.now();
+    app.loadFromCloud().catch(err => console.warn('自动刷新失败:', err));
+});
 </script>
 </body>
 </html>

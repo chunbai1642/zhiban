@@ -372,6 +372,13 @@
                             <button onclick="app.cancelImport()" class="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-medium hover:bg-slate-200 transition">取消</button>
                         </div>
                     </div>
+                    <div class="mt-8 bg-red-50 rounded-xl p-4 border border-red-200">
+                        <p class="font-medium text-red-600 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>危险操作</p>
+                        <p class="text-xs text-slate-500 mb-3">如果数据乱了（出现大量"未知"班次），先点下面按钮把本地和云端的数据全部清空，再重新导入 Excel。岗位设置会保留。</p>
+                        <button onclick="app.clearAllData()" class="px-4 py-2 bg-red-600 text-white rounded-xl text-sm hover:bg-red-700 transition">
+                            <i class="fas fa-trash-alt mr-1"></i>清空所有数据（重新导入前使用）
+                        </button>
+                    </div>
                     <div class="mt-8 bg-slate-50 rounded-xl p-4 text-sm text-slate-600">
                         <p class="font-medium mb-2"><i class="fas fa-info-circle text-blue-500 mr-1"></i>导入说明</p>
                         <ul class="space-y-1 text-xs text-slate-500">
@@ -1818,6 +1825,37 @@ class DutyApp {
                 '<tr>' + row.map(c => `<td class="px-3 py-2 border">${c}</td>`).join('') + '</tr>'
             ).join('');
         }
+    }
+
+    // ========== 清空所有数据（本地+云端）==========
+    async clearAllData() {
+        if (!confirm('确定清空全部排班、人员和换班数据？\n此操作不可恢复！')) return;
+        if (!confirm('再次确认：本地和云端的数据都会被删除（岗位保留）。\n清空后请重新导入 Excel。')) return;
+        this.pushHistory('清空所有数据');
+        this.staff = [];
+        this.schedule = {};
+        this.swaps = [];
+        // 清本地
+        localStorage.setItem('duty_staff', '[]');
+        localStorage.setItem('duty_schedule', '{}');
+        localStorage.setItem('duty_swaps', '[]');
+        // 清云端（显式删除，不等自动同步）
+        if (supabase) {
+            this.updateSyncStatus('正在清空云端...', 'bg-amber-400');
+            try {
+                await supabase.from('schedules').delete().gte('date', '0000-01-01');
+                await supabase.from('swaps').delete().neq('id', 0);
+                await supabase.from('staff').delete().neq('id', 0);
+                this.updateSyncStatus('云端同步正常', 'bg-green-400');
+            } catch (err) {
+                console.error('清空云端失败:', err);
+                this.updateSyncStatus('清空失败', 'bg-red-400');
+            }
+        }
+        this.renderStaffList();
+        this.renderCalendar();
+        this.updateStats();
+        alert('已清空全部数据，现在可以重新导入 Excel 了。');
     }
 
     cancelImport() {

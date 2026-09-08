@@ -592,7 +592,7 @@ class DutyApp {
         const { data: postsData, error: postsError } = await supabase.from('posts').select('*').order('id');
         if (postsError) throw new Error('岗位表: ' + postsError.message);
         if (postsData && postsData.length > 0) {
-            this.posts = postsData;
+            this.posts = postsData.map(p => ({...p, color: p.color || 'bg-slate-100 text-slate-600 border-slate-200'}));
         } else {
             // 云端为空，把默认岗位写上去
             for (const p of this.posts) {
@@ -600,28 +600,28 @@ class DutyApp {
             }
         }
 
-        // 加载人员（合并到本地，不覆盖已有）
+        // 加载人员（以云端为准，整体替换本地，避免已删除人员复活）
         const { data: staffData, error: staffError } = await supabase.from('staff').select('*').order('id');
         if (staffError) throw new Error('人员表: ' + staffError.message);
         if (staffData && staffData.length > 0) {
-            const localIds = new Set(this.staff.map(s => s.id));
-            staffData.forEach(s => {
-                if (!localIds.has(s.id)) {
-                    this.staff.push({id: s.id, name: s.name, postId: s.post_id, contact: s.contact || ''});
-                }
-            });
+            this.staff = staffData.map(s => ({id: s.id, name: s.name, postId: s.post_id, contact: s.contact || ''}));
         }
 
-        // 加载排班（合并，不重复）
-        const { data: scheduleData, error: scheduleError } = await supabase.from('schedules').select('*');
-        if (scheduleError) throw new Error('排班表: ' + scheduleError.message);
-        if (scheduleData) {
+        // 加载排班（以云端为准，整体替换；分页拉取，绕过接口1000条上限）
+        let scheduleData = [];
+        let pageFrom = 0;
+        while (true) {
+            const { data: pageData, error: scheduleError } = await supabase.from('schedules').select('*').order('date').order('id').range(pageFrom, pageFrom + 999);
+            if (scheduleError) throw new Error('排班表: ' + scheduleError.message);
+            scheduleData = scheduleData.concat(pageData || []);
+            if (!pageData || pageData.length < 1000) break;
+            pageFrom += 1000;
+        }
+        if (scheduleData.length > 0) {
+            this.schedule = {};
             scheduleData.forEach(s => {
                 if (!this.schedule[s.date]) this.schedule[s.date] = [];
-                const exists = this.schedule[s.date].find(x => x.staffId === s.staff_id && x.postId === s.post_id);
-                if (!exists) {
-                    this.schedule[s.date].push({staffId: s.staff_id, postId: s.post_id, shiftType: s.shift_type});
-                }
+                this.schedule[s.date].push({staffId: s.staff_id, postId: s.post_id, shiftType: s.shift_type});
             });
         }
 
@@ -629,9 +629,9 @@ class DutyApp {
         const { data: swapsData, error: swapsError } = await supabase.from('swaps').select('*').order('created_at', {ascending: false});
         if (swapsError) throw new Error('换班表: ' + swapsError.message);
         if (swapsData) {
-            const localIds = new Set(this.swaps.map(s => s.id));
+            this.swaps = [];
             swapsData.forEach(sw => {
-                if (!localIds.has(sw.id)) {
+                if (true) {
                     this.swaps.push({
                         id: sw.id,
                         fromId: sw.from_id,
@@ -668,15 +668,21 @@ class DutyApp {
 
     async syncToCloud() {
         if (!supabase) return;
+        // 并发保护：同步中再触发则标记，结束后补一次最新同步
+        if (this._syncing) { this._syncDirty = true; return; }
+        this._syncing = true;
         try {
             await this.syncPostsToCloud();
-            await this.syncStaffToCloud();
             await this.syncScheduleToCloud();
+            await this.syncStaffToCloud();
             await this.syncSwapsToCloud();
             this.updateSyncStatus('云端同步正常', 'bg-green-400');
         } catch (err) {
             console.error('云端同步失败:', err);
             this.updateSyncStatus('同步失败', 'bg-red-400');
+        } finally {
+            this._syncing = false;
+            if (this._syncDirty) { this._syncDirty = false; this.syncToCloud(); }
         }
     }
 
@@ -700,6 +706,10 @@ class DutyApp {
         }));
         const { error } = await supabase.from('staff').upsert(records, {onConflict: 'id'});
         if (error) throw new Error('同步人员失败: ' + error.message);
+        // 删除云端有而本地已删除的人员（排班已先同步，不会有引用残留）
+        const localIds = this.staff.map(s => s.id).join(',');
+        const { error: delErr } = await supabase.from('staff').delete().not('id', 'in', `(${localIds})`);
+        if (delErr) throw new Error('清理已删人员失败: ' + delErr.message);
     }
 
     async syncScheduleToCloud() {
@@ -708,15 +718,13 @@ class DutyApp {
         Object.keys(this.schedule).forEach(date => {
             if (this.schedule[date] && this.schedule[date].length) monthSet.add(date.slice(0, 7));
         });
-        const months = [...monthSet];
-        if (!months.length) return;
+        if (!monthSet.size) return; // 本地无排班时跳过，防止异常情况下误清云端
+        const dates = Object.keys(this.schedule).filter(d => this.schedule[d] && this.schedule[d].length).sort();
+        const minDate = dates[0], maxDate = dates[dates.length - 1];
 
-        // 并行删除云端这些月份的旧数据
-        const delResults = await Promise.all(months.map(mp =>
-            supabase.from('schedules').delete().like('date', `${mp}%`)
-        ));
-        const delErr = delResults.find(r => r.error);
-        if (delErr) throw new Error('删除旧排班失败: ' + delErr.error.message);
+        // 按日期范围删除云端旧数据（范围内的空月份也会被清掉）
+        const { error: delError } = await supabase.from('schedules').delete().gte('date', minDate).lte('date', maxDate);
+        if (delError) throw new Error('删除旧排班失败: ' + delError.message);
 
         // 汇总所有记录，分批插入（每批500条）
         const inserts = [];
@@ -737,7 +745,10 @@ class DutyApp {
     }
 
     async syncSwapsToCloud() {
-        if (this.swaps.length === 0) return;
+        if (this.swaps.length === 0) {
+            await supabase.from('swaps').delete().neq('id', 0);
+            return;
+        }
         const records = this.swaps.map(sw => ({
             id: sw.id,
             from_id: sw.fromId,
@@ -757,6 +768,10 @@ class DutyApp {
         }));
         const { error } = await supabase.from('swaps').upsert(records, {onConflict: 'id'});
         if (error) throw new Error('同步换班失败: ' + error.message);
+        // 删除云端有而本地已删除的换班记录
+        const swapIds = this.swaps.map(s => s.id).join(',');
+        const { error: delErr } = await supabase.from('swaps').delete().not('id', 'in', `(${swapIds})`);
+        if (delErr) throw new Error('清理已删换班失败: ' + delErr.message);
     }
 
     async syncFromCloud() {
